@@ -58,7 +58,6 @@ app.post('/webhook/elevenlabs', (req, res) => {
   console.log('📞 Post-call webhook received');
   const { data } = req.body;
   
-  // Extract user ID (try multiple sources)
   const user_id = data?.conversation_initiation_client_data?.dynamic_variables?.user_id || 
                   data?.metadata?.caller_number || 
                   data?.conversation_id ||
@@ -66,7 +65,6 @@ app.post('/webhook/elevenlabs', (req, res) => {
   
   console.log(`👤 Processing post-call for user: ${user_id}`);
   
-  // Store data from your ElevenLabs data collection
   if (data?.data_collection) {
     const existing = userMemory.get(user_id) || {};
     const updated = {
@@ -84,7 +82,7 @@ app.post('/webhook/elevenlabs', (req, res) => {
   res.status(200).json({ message: 'Post-call data processed successfully' });
 });
 
-// Debug endpoint to see all memory
+// Debug endpoint
 app.get('/debug/memory', (req, res) => {
   const allMemory = {};
   for (let [key, value] of userMemory.entries()) {
@@ -113,6 +111,4 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Memory API running on port ${PORT}`);
-  console.log(`🔗 Your Repl URL: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`);
-  console.log(`📝 Add this URL to ElevenLabs tools and webhooks`);
 });
