@@ -18,8 +18,68 @@ let userMemory = new Map();
 let users = new Map();
 let userIdCounter = 1;
 
+// System prompt storage
+let systemPrompt = `Personality
+You are an empathetic startup goal coach at Duuo, here to help users and their teammates align their initiatives and goals to the startup's plan, enabling better and faster execution. Like any good human coach it is important to build trust and rapport with the user. This means really getting to know them empathetically and remembering nuanced things about them. It's about building a human-like relationship FIRST before jumping into business talk about goals and updates.
+Your coaching style is warm, curious, and genuinely interested in the person. You love learning about their hobbies, current mood, recent wins, and what's exciting them. You're a world expert in OKRs, V2MOMs, and SMART Goal setting but you always prioritize the human connection.
+
+Memory & Recognition
+At the start of every call: check if you know this person by calling remember_user_details(action="retrieve", caller_id="{{system__caller_id}}"). If you retrieve a record back calling remember_user_details using "{{system__caller_id}}"  then greet them warmly by name and reference something personal from your last conversation.  If no record is retrieved using "{{system__caller_id}}" then make sure you ask for their first and last name.  
+
+IMPORTANT: When referencing past events, pay attention to when the memory was created. If someone mentioned future plans (like camping this weekend) and the memory is from days ago, ask how it went. If the memory is recent (minutes/hours), those plans likely haven't happened yet.
+During conversation: Store interesting details about them using remember_user_details(action="store", user_id="their_full_name", caller_id="{{system__caller_id}}", details={what_you_learned}).
+
+Environment
+You are engaged in a voice conversation with a user who is likely seeking guidance on aligning their work with the startup's overall objectives. The user may be a founder, manager, or team member. The environment is likely a professional setting, but the user may be calling from anywhere. Before diving into goal-setting, dedicate the first minute or so to casual "chit chat" to build rapport and understand the user's current state of mind.
+
+Tone
+Your responses are warm, encouraging, and insightful. You are curious and ask clarifying questions to understand the user's specific situation and build rapport. You explain complex goal-setting frameworks in simple, actionable terms. You use a conversational style with natural speech patterns, including brief affirmations ("I understand," "That's interesting"), thoughtful pauses, and open-ended questions to encourage sharing. Emphasize active listening and empathy in your tone.
+Keep responses concise and conversational. After making your point, PAUSE and wait for the user to respond. Do NOT repeat yourself.
+
+Goal
+Your primary goal is to help the user effectively align their initiatives and goals with the startup's plan, using your expertise in OKRs, V2MOMs, and SMART Goals. Prioritize building rapport and trust before diving into business objectives.
+
+Initial Rapport Building (1 minute):
+
+Engage in casual conversation to build rapport. Ask about their day, weekend plans, or recent work experiences.
+Actively listen and respond empathetically to their answers.
+Remember and reference details from previous conversations to personalize the interaction.
+
+
+Understanding the User's Context:
+
+Ask clarifying questions to understand the user's role, team, and current goals.
+Inquire about the startup's overall plan, objectives, and key performance indicators.
+Identify any challenges or roadblocks the user is facing in aligning their work with the startup's goals.
+
+
+Applying Goal-Setting Frameworks:
+
+Based on the user's context, recommend the most appropriate goal-setting framework (OKR, V2MOM, or SMART Goals).
+Explain the key principles of the chosen framework and how it can be applied to the user's situation.
+Provide step-by-step guidance on setting objectives, key results, and initiatives.
+
+
+Alignment and Execution Strategies:
+
+Help the user align their individual or team goals with the startup's overall objectives.
+Suggest strategies for tracking progress, measuring success, and making adjustments as needed.
+Offer tips for effective communication and collaboration within the team.
+
+
+Resource Sharing and Support:
+
+Provide links to relevant articles, templates, and tools.
+Offer ongoing support and encouragement to help the user achieve their goals.
+
+Guardrails
+Remain within the scope of goal-setting and alignment strategies. Avoid giving advice on topics outside of your expertise, such as legal or financial matters. Do not provide specific personal advice. Maintain a professional and respectful tone at all times. If the user expresses frustration, acknowledge their feelings and offer support. Do not become overly personal or pry into sensitive personal matters.`;
+
 // JWT secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
+
+// Anthropic API configuration (you'll need to set this environment variable)
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // Helper function to get time since last call
 function getTimeSinceLastCall(lastCallTime) {
@@ -33,6 +93,44 @@ function getTimeSinceLastCall(lastCallTime) {
   if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
   if (diffMinutes < 1440) return `${Math.round(diffMinutes / 60)} hours ago`;
   return `${Math.round(diffMinutes / 1440)} days ago`;
+}
+
+// Helper function to call Anthropic API
+async function callAnthropicAPI(messages, userContext = '') {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('Anthropic API key not configured');
+  }
+
+  const systemMessage = userContext ? 
+    `${systemPrompt}\n\nUser Context:\n${userContext}` : 
+    systemPrompt;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-sonnet-20240229',
+        max_tokens: 1000,
+        system: systemMessage,
+        messages: messages
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Anthropic API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.content[0].text;
+  } catch (error) {
+    console.error('Anthropic API call failed:', error);
+    throw error;
+  }
 }
 
 // ================================
@@ -168,6 +266,32 @@ app.delete('/admin/users/:id', (req, res) => {
   }
 });
 
+// System prompt endpoints
+app.get('/admin/system-prompt', (req, res) => {
+  res.json({ systemPrompt: systemPrompt });
+});
+
+app.post('/admin/system-prompt', (req, res) => {
+  try {
+    const { systemPrompt: newPrompt } = req.body;
+    
+    if (!newPrompt || typeof newPrompt !== 'string') {
+      return res.status(400).json({ error: 'System prompt is required and must be a string' });
+    }
+    
+    systemPrompt = newPrompt;
+    console.log('🤖 System prompt updated');
+    
+    res.json({ 
+      message: 'System prompt updated successfully',
+      systemPrompt: systemPrompt 
+    });
+  } catch (error) {
+    console.error('Error updating system prompt:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ================================
 // AUTHENTICATION ENDPOINTS
 // ================================
@@ -267,7 +391,7 @@ app.get('/mobile', (req, res) => {
   res.sendFile(path.join(__dirname, 'mobile.html'));
 });
 
-// Chat endpoint for mobile app
+// Enhanced chat endpoint with LLM integration
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, user_id, caller_id } = req.body;
@@ -286,7 +410,7 @@ app.post('/api/chat', async (req, res) => {
     
     console.log(`💬 Chat message from ${user_id}: ${message}`);
     
-    // First, retrieve user memory for context
+    // Retrieve user memory for context
     let userContext = '';
     let userData = null;
     let foundKey = null;
@@ -318,17 +442,43 @@ app.post('/api/chat', async (req, res) => {
     }
     
     if (userData) {
-      userContext = `Previous context about ${foundKey}: ${JSON.stringify(userData, null, 2)}`;
+      const timeSince = getTimeSinceLastCall(userData.last_call_time);
+      const memoryAge = getTimeSinceLastCall(userData.first_created || userData.last_call_time);
+      
+      userContext = `User: ${foundKey}
+Last interaction: ${timeSince || 'First time'}
+Memory created: ${memoryAge || 'Just now'}
+User details: ${JSON.stringify(userData, null, 2)}
+
+Remember to reference their past conversations and build on your relationship. If they mentioned future plans in past conversations and enough time has passed, ask how those went.`;
+    } else {
+      userContext = `This appears to be a new user (${user_id}). Focus on building rapport and learning about them.`;
     }
     
-    // Simple AI response system (you can enhance this later with OpenAI API)
-    const aiResponse = generateAIResponse(message, userContext, foundKey || user_id);
+    let aiResponse;
     
-    // Extract any new information from the conversation to store
+    if (ANTHROPIC_API_KEY) {
+      try {
+        // Use Anthropic API for enhanced responses
+        const messages = [
+          { role: 'user', content: message }
+        ];
+        
+        aiResponse = await callAnthropicAPI(messages, userContext);
+      } catch (error) {
+        console.error('Anthropic API failed, falling back to simple responses:', error);
+        aiResponse = generateSimpleAIResponse(message, userContext, foundKey || user_id);
+      }
+    } else {
+      // Fallback to simple responses if no API key
+      aiResponse = generateSimpleAIResponse(message, userContext, foundKey || user_id);
+    }
+    
+    // Extract and store new information from the conversation
     const newInfo = extractInformationFromMessage(message);
     
     // Update user memory if new information was shared
-    if (Object.keys(newInfo).length > 0) {
+    if (Object.keys(newInfo).length > 0 || !userData) {
       const storageKey = foundKey || user_id || caller_id || 'unknown_user';
       const existing = userMemory.get(storageKey) || {};
       const updated = {
@@ -355,50 +505,8 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Get user memories endpoint
-app.get('/api/memory/user/:userId', (req, res) => {
-  try {
-    const userId = decodeURIComponent(req.params.userId);
-    
-    // Verify JWT token
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    
-    try {
-      jwt.verify(token, JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    
-    // Find user memory
-    let userData = userMemory.get(userId);
-    
-    // If not found by exact match, try partial match
-    if (!userData) {
-      for (let [key, data] of userMemory.entries()) {
-        if (key.includes(userId) || userId.includes(key.split(' ')[0])) {
-          userData = data;
-          break;
-        }
-      }
-    }
-    
-    if (userData) {
-      res.json(userData);
-    } else {
-      res.status(404).json({ error: 'No memories found for this user' });
-    }
-    
-  } catch (error) {
-    console.error('Memory retrieval error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Simple AI response generator (basic version - you can enhance this)
-function generateAIResponse(message, context, userName) {
+// Fallback simple AI response function
+function generateSimpleAIResponse(message, context, userName) {
   const lowerMessage = message.toLowerCase();
   
   // Greeting responses
@@ -406,7 +514,7 @@ function generateAIResponse(message, context, userName) {
     if (userName && userName !== 'unknown_user') {
       return `Hello ${userName}! Great to hear from you. How are you doing today? What would you like to work on?`;
     }
-    return "Hello! I'm your AI goal coach. I'm here to help you align your goals and get things done. What's on your mind today?";
+    return "Hello! I'm Duuo, your AI goal coach. I'm here to help you align your goals and get things done. What's on your mind today?";
   }
   
   // Goal-related responses
@@ -455,6 +563,48 @@ function extractInformationFromMessage(message) {
   
   return info;
 }
+
+// Get user memories endpoint
+app.get('/api/memory/user/:userId', (req, res) => {
+  try {
+    const userId = decodeURIComponent(req.params.userId);
+    
+    // Verify JWT token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    // Find user memory
+    let userData = userMemory.get(userId);
+    
+    // If not found by exact match, try partial match
+    if (!userData) {
+      for (let [key, data] of userMemory.entries()) {
+        if (key.includes(userId) || userId.includes(key.split(' ')[0])) {
+          userData = data;
+          break;
+        }
+      }
+    }
+    
+    if (userData) {
+      res.json(userData);
+    } else {
+      res.status(404).json({ error: 'No memories found for this user' });
+    }
+    
+  } catch (error) {
+    console.error('Memory retrieval error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // ================================
 // EXISTING MEMORY ENDPOINTS
@@ -695,7 +845,7 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v6.0 - With Mobile App!',
+    status: '🧠 Duuo Memory API v7.0 - With Enhanced LLM Integration!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
@@ -705,7 +855,9 @@ app.get('/', (req, res) => {
       'JWT token authentication',
       'Progressive Web App (Mobile)',
       'Chat and Voice Integration',
-      'Memory Viewer'
+      'Memory Viewer',
+      'Anthropic Claude Integration',
+      'System Prompt Management'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
@@ -718,18 +870,21 @@ app.get('/', (req, res) => {
       auth_verify: '/auth/verify',
       mobile_app: '/mobile',
       mobile_chat: '/api/chat',
-      user_memory: '/api/memory/user/:userId'
+      user_memory: '/api/memory/user/:userId',
+      system_prompt: '/admin/system-prompt'
     },
     stored_users: userMemory.size,
     registered_users: users.size,
+    llm_integration: ANTHROPIC_API_KEY ? 'Anthropic Claude API' : 'Simple Fallback',
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Memory API v6.0 with Mobile App running on port ${PORT}`);
+  console.log(`🚀 Enhanced Duuo Memory API v7.0 with LLM Integration running on port ${PORT}`);
   console.log(`👥 Admin panel available at: /admin`);
   console.log(`📱 Mobile app available at: /mobile`);
+  console.log(`🤖 LLM Integration: ${ANTHROPIC_API_KEY ? 'Anthropic Claude API' : 'Simple Fallback (set ANTHROPIC_API_KEY)'}`);
   console.log(`🔐 Authentication system ready!`);
 });
