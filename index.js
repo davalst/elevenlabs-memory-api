@@ -89,6 +89,7 @@ app.post('/api/memory/remember', (req, res) => {
       caller_id: caller_id || existing.caller_id,
       last_updated: new Date().toISOString(),
       last_call_time: new Date().toISOString(), // Track when this call happened
+      first_created: existing.first_created || new Date().toISOString(), // Track when first created
       conversation_count: (existing.conversation_count || 0) + 1
     };
     
@@ -103,6 +104,45 @@ app.post('/api/memory/remember', (req, res) => {
   }
   
   res.status(400).json({ error: 'Invalid action. Use "store" or "retrieve"' });
+});
+
+// Memory cleanup endpoint
+app.post('/api/memory/cleanup', (req, res) => {
+  console.log('🧹 Starting memory cleanup...');
+  
+  // Fix David's duplicate entries
+  const davidAlston = userMemory.get('David Alston');
+  const david = userMemory.get('David');
+  
+  if (davidAlston && david) {
+    // Merge the entries, keeping the most recent data
+    const merged = {
+      ...david,
+      ...davidAlston,
+      first_created: david.last_call_time < davidAlston.last_call_time ? david.last_call_time : davidAlston.last_call_time,
+      conversation_count: (david.conversation_count || 0) + (davidAlston.conversation_count || 0)
+    };
+    
+    userMemory.set('David Alston', merged);
+    userMemory.delete('David');
+    console.log('✅ Merged David entries');
+  }
+  
+  // Fix Mary-Gwen's entry
+  const maryGwenBroken = userMemory.get('{{caller_number}}');
+  if (maryGwenBroken && maryGwenBroken.fullname === 'Mary Gwen') {
+    userMemory.set('Mary Gwen', {
+      ...maryGwenBroken,
+      first_created: maryGwenBroken.last_call_time
+    });
+    userMemory.delete('{{caller_number}}');
+    console.log('✅ Fixed Mary Gwen entry');
+  }
+  
+  res.json({ 
+    message: 'Memory cleanup completed',
+    total_users: userMemory.size 
+  });
 });
 
 // Enhanced post-call webhook
@@ -148,6 +188,7 @@ app.post('/webhook/elevenlabs', (req, res) => {
       caller_id: caller_id,
       last_conversation_date: new Date().toISOString(),
       last_call_time: new Date().toISOString(),
+      first_created: existing.first_created || new Date().toISOString(),
       conversation_summary: data?.analysis?.transcript_summary || 'No summary available',
       call_successful: data?.analysis?.call_successful || false,
       call_duration: data?.metadata?.duration || 0
@@ -166,7 +207,8 @@ app.get('/debug/memory', (req, res) => {
   for (let [key, value] of userMemory.entries()) {
     allMemory[key] = {
       ...value,
-      timeSinceLastCall: getTimeSinceLastCall(value.last_call_time)
+      timeSinceLastCall: getTimeSinceLastCall(value.last_call_time),
+      memoryAge: getTimeSinceLastCall(value.first_created || value.last_call_time)
     };
   }
   res.json({
@@ -178,17 +220,18 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v2.0 - Enhanced with Caller ID!',
+    status: '🧠 ElevenLabs Memory API v3.0 - Enhanced with Cleanup & Context!',
     features: [
-      'Caller ID-based memory isolation',
-      'Accurate timestamp tracking',
-      'Automatic user recognition',
-      'Time-since-last-call calculation'
+      'Smart name-based memory lookup',
+      'Temporal context awareness', 
+      'Memory cleanup and deduplication',
+      'Enhanced debugging with memory age'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
       webhook: '/webhook/elevenlabs', 
-      debug: '/debug/memory'
+      debug: '/debug/memory',
+      cleanup: '/api/memory/cleanup'
     },
     stored_users: userMemory.size,
     timestamp: new Date().toISOString()
@@ -197,6 +240,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Memory API v2.0 running on port ${PORT}`);
-  console.log(`📱 Now supports Caller ID isolation and accurate timestamps!`);
+  console.log(`🚀 Enhanced Memory API v3.0 running on port ${PORT}`);
+  console.log(`🧹 Now includes cleanup, context awareness, and smart name matching!`);
 });
