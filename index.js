@@ -45,6 +45,7 @@ app.get('/admin/users', (req, res) => {
     id: user.id,
     email: user.email,
     fullName: user.fullName,
+    phoneNumber: user.phoneNumber,
     createdAt: user.createdAt,
     lastLogin: user.lastLogin
   }));
@@ -55,16 +56,24 @@ app.get('/admin/users', (req, res) => {
 // Create new user
 app.post('/admin/users', async (req, res) => {
   try {
-    const { email, password, fullName } = req.body;
+    const { email, password, fullName, phoneNumber } = req.body;
     
-    if (!email || !password || !fullName) {
-      return res.status(400).json({ error: 'Email, password, and full name are required' });
+    if (!email || !password || !fullName || !phoneNumber) {
+      return res.status(400).json({ error: 'Email, password, full name, and phone number are required' });
     }
     
-    // Check if user already exists
+    // Validate phone number format (basic validation)
+    if (!phoneNumber.match(/^\+[1-9]\d{1,14}$/)) {
+      return res.status(400).json({ error: 'Phone number must be in international format (+1234567890)' });
+    }
+    
+    // Check if user already exists (email or phone)
     for (let user of users.values()) {
       if (user.email === email) {
         return res.status(400).json({ error: 'User with this email already exists' });
+      }
+      if (user.phoneNumber === phoneNumber) {
+        return res.status(400).json({ error: 'User with this phone number already exists' });
       }
     }
     
@@ -77,6 +86,7 @@ app.post('/admin/users', async (req, res) => {
       email,
       password: hashedPassword,
       fullName,
+      phoneNumber,
       createdAt: new Date().toISOString(),
       lastLogin: null,
       isActive: true
@@ -84,14 +94,30 @@ app.post('/admin/users', async (req, res) => {
     
     users.set(newUser.id, newUser);
     
-    console.log(`👤 New user created: ${email} (${fullName})`);
+    // Create initial memory entry for this user
+    const initialMemory = {
+      fullname: fullName,
+      phone_number: phoneNumber,
+      email: email,
+      first_created: new Date().toISOString(),
+      last_updated: new Date().toISOString(),
+      conversation_count: 0,
+      created_via: 'admin_panel',
+      status: 'registered'
+    };
+    
+    // Store memory using full name as key (consistent with voice system)
+    userMemory.set(fullName, initialMemory);
+    
+    console.log(`👤 New user created: ${email} (${fullName}) - Memory initialized`);
     
     res.status(201).json({
-      message: 'User created successfully',
+      message: 'User created successfully with initial memory',
       user: {
         id: newUser.id,
         email: newUser.email,
-        fullName: newUser.fullName
+        fullName: newUser.fullName,
+        phoneNumber: newUser.phoneNumber
       }
     });
   } catch (error) {
@@ -106,9 +132,37 @@ app.delete('/admin/users/:id', (req, res) => {
   
   if (users.has(userId)) {
     const user = users.get(userId);
+    
+    // Delete user from users table
     users.delete(userId);
-    console.log(`🗑️ User deleted: ${user.email}`);
-    res.json({ message: 'User deleted successfully' });
+    
+    // Find and delete associated memories
+    const memoriesToDelete = [];
+    
+    // Search for memories by phone number, email, or full name
+    for (let [key, memoryData] of userMemory.entries()) {
+      if (
+        memoryData.phone_number === user.phoneNumber ||
+        memoryData.email === user.email ||
+        memoryData.fullname === user.fullName ||
+        key === user.fullName
+      ) {
+        memoriesToDelete.push(key);
+      }
+    }
+    
+    // Delete all matching memories
+    memoriesToDelete.forEach(key => {
+      userMemory.delete(key);
+      console.log(`🗑️ Deleted memory for: ${key}`);
+    });
+    
+    console.log(`🗑️ User deleted: ${user.email} (${user.fullName}) - ${memoriesToDelete.length} memory entries removed`);
+    
+    res.json({ 
+      message: 'User and associated memories deleted successfully',
+      deletedMemories: memoriesToDelete.length
+    });
   } else {
     res.status(404).json({ error: 'User not found' });
   }
