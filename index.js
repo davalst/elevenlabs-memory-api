@@ -22,32 +22,32 @@ function getTimeSinceLastCall(lastCallTime) {
   return `${Math.round(diffMinutes / 1440)} days ago`;
 }
 
-// Enhanced memory tool endpoint
+// Enhanced memory tool endpoint with cleanup
 app.post('/api/memory/remember', (req, res) => {
   const { action, user_id, details, caller_id } = req.body;
   
   console.log(`🧠 Memory ${action} for user: ${user_id}, caller: ${caller_id}`);
   
   if (action === 'retrieve') {
-    // First try to find by caller_id (primary lookup)
+    // Find user by name (primary method since caller_id isn't working)
     let userData = null;
     let foundKey = null;
     
-    if (caller_id) {
-      // Look for user by caller_id first
-      for (let [key, data] of userMemory.entries()) {
-        if (data.caller_id === caller_id) {
-          userData = data;
-          foundKey = key;
-          break;
-        }
-      }
-    }
-    
-    // If not found by caller_id, try by user_id/name
-    if (!userData && user_id) {
+    if (user_id) {
+      // Try exact match first
       userData = userMemory.get(user_id);
       foundKey = user_id;
+      
+      // If not found, try partial match (e.g., "David" matches "David Alston")
+      if (!userData) {
+        for (let [key, data] of userMemory.entries()) {
+          if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
+            userData = data;
+            foundKey = key;
+            break;
+          }
+        }
+      }
     }
     
     if (!userData) {
@@ -62,14 +62,19 @@ app.post('/api/memory/remember', (req, res) => {
     // Calculate time since last call
     const timeSince = getTimeSinceLastCall(userData.last_call_time);
     
+    // Add context about when memories were created
+    const memoryAge = getTimeSinceLastCall(userData.first_created || userData.last_call_time);
+    
     console.log('📖 Retrieved memory:', userData);
     return res.json({
-      message: `Welcome back ${userData.fullname || foundKey}! Your last call was ${timeSince}. I remember our previous conversations.`,
+      message: `Welcome back ${userData.fullname || foundKey}! Your last call was ${timeSince}.`,
       userData: userData,
       isNewUser: false,
       timeSinceLastCall: timeSince,
+      memoryAge: memoryAge,
       lastCallTime: userData.last_call_time,
-      caller_id: caller_id
+      caller_id: caller_id,
+      contextNote: `Memory created: ${memoryAge}. Use this to understand if events mentioned have likely happened yet.`
     });
   }
   
