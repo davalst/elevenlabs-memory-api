@@ -22,67 +22,14 @@ function getTimeSinceLastCall(lastCallTime) {
   return `${Math.round(diffMinutes / 1440)} days ago`;
 }
 
-// Pre-call webhook - captures CLID before conversation starts
-app.post('/webhook/precall', (req, res) => {
-  console.log('📞 Pre-call webhook received');
-  const { from_number, to_number, call_sid, agent_id } = req.body;
-  
-  console.log(`📱 Incoming call from: ${from_number} to: ${to_number}, call_sid: ${call_sid}`);
-  
-  // Look up user by phone number to personalize the experience
-  let userData = null;
-  let foundKey = null;
-  
-  // Search for user by their actual phone number
-  for (let [key, data] of userMemory.entries()) {
-    if (data.phone_number === from_number || data.caller_id === from_number) {
-      userData = data;
-      foundKey = key;
-      break;
-    }
-  }
-  
-  if (userData) {
-    console.log(`🎯 Recognized caller: ${foundKey} (${from_number})`);
-    
-    // Return data to personalize the conversation
-    return res.json({
-      recognized: true,
-      user_name: userData.fullname || foundKey,
-      last_call: getTimeSinceLastCall(userData.last_call_time),
-      conversation_config_override: {
-        agent: {
-          first_message: `Welcome back ${userData.fullname}! Great to hear from you again. Your last call was ${getTimeSinceLastCall(userData.last_call_time)}.`
-        }
-      },
-      dynamic_variables: {
-        caller_number: from_number,
-        user_name: userData.fullname || foundKey,
-        is_returning_user: true
-      }
-    });
-  } else {
-    console.log(`👋 New caller: ${from_number}`);
-    
-    // New user - use standard greeting
-    return res.json({
-      recognized: false,
-      dynamic_variables: {
-        caller_number: from_number,
-        is_returning_user: false
-      }
-    });
-  }
-});
-
-// Enhanced memory tool endpoint with cleanup
+// Enhanced memory tool endpoint
 app.post('/api/memory/remember', (req, res) => {
   const { action, user_id, details, caller_id } = req.body;
   
   console.log(`🧠 Memory ${action} for user: ${user_id}, caller: ${caller_id}`);
   
   if (action === 'retrieve') {
-    // Find user by name (primary method since caller_id isn't working)
+    // Find user by name (primary method)
     let userData = null;
     let foundKey = null;
     
@@ -139,11 +86,11 @@ app.post('/api/memory/remember', (req, res) => {
     const updated = { 
       ...existing, 
       ...details,
-      phone_number: caller_id || existing.phone_number, // Store actual phone number
+      phone_number: caller_id || existing.phone_number,
       caller_id: caller_id || existing.caller_id,
       last_updated: new Date().toISOString(),
-      last_call_time: new Date().toISOString(), // Track when this call happened
-      first_created: existing.first_created || new Date().toISOString(), // Track when first created
+      last_call_time: new Date().toISOString(),
+      first_created: existing.first_created || new Date().toISOString(),
       conversation_count: (existing.conversation_count || 0) + 1
     };
     
@@ -158,6 +105,20 @@ app.post('/api/memory/remember', (req, res) => {
   }
   
   res.status(400).json({ error: 'Invalid action. Use "store" or "retrieve"' });
+});
+
+// Clear all memories endpoint
+app.post('/api/memory/clear-all', (req, res) => {
+  console.log('🗑️ Clearing all memories...');
+  const userCount = userMemory.size;
+  userMemory.clear();
+  
+  console.log(`✅ Cleared ${userCount} user records`);
+  res.json({ 
+    message: 'All memories cleared successfully',
+    cleared_users: userCount,
+    total_users: userMemory.size 
+  });
 });
 
 // Memory cleanup endpoint
@@ -182,16 +143,22 @@ app.post('/api/memory/cleanup', (req, res) => {
     console.log('✅ Merged David entries');
   }
   
-  // Fix Mary-Gwen's entry
-  const maryGwenBroken = userMemory.get('{{caller_number}}');
-  if (maryGwenBroken && maryGwenBroken.fullname === 'Mary Gwen') {
-    userMemory.set('Mary Gwen', {
-      ...maryGwenBroken,
-      first_created: maryGwenBroken.last_call_time
-    });
-    userMemory.delete('{{caller_number}}');
-    console.log('✅ Fixed Mary Gwen entry');
+  // Fix any broken entries
+  const brokenEntries = [];
+  for (let [key, data] of userMemory.entries()) {
+    if (key.includes('{{') || key.includes('undefined')) {
+      brokenEntries.push(key);
+    }
   }
+  
+  brokenEntries.forEach(key => {
+    const data = userMemory.get(key);
+    if (data.fullname) {
+      userMemory.set(data.fullname, data);
+      userMemory.delete(key);
+      console.log(`✅ Fixed broken entry: ${key} → ${data.fullname}`);
+    }
+  });
   
   res.json({ 
     message: 'Memory cleanup completed',
@@ -199,21 +166,7 @@ app.post('/api/memory/cleanup', (req, res) => {
   });
 });
 
-// Clear all memories endpoint
-app.post('/api/memory/clear-all', (req, res) => {
-  console.log('🗑️ Clearing all memories...');
-  const userCount = userMemory.size;
-  userMemory.clear();
-  
-  console.log(`✅ Cleared ${userCount} user records`);
-  res.json({ 
-    message: 'All memories cleared successfully',
-    cleared_users: userCount,
-    total_users: userMemory.size 
-  });
-});
-
-// Enhanced post-call webhook
+// Post-call webhook
 app.post('/webhook/elevenlabs', (req, res) => {
   console.log('📞 Post-call webhook received');
   const { data } = req.body;
@@ -235,7 +188,7 @@ app.post('/webhook/elevenlabs', (req, res) => {
   
   if (caller_id) {
     for (let [key, userData] of userMemory.entries()) {
-      if (userData.caller_id === caller_id) {
+      if (userData.caller_id === caller_id || userData.phone_number === caller_id) {
         existingKey = key;
         existing = userData;
         break;
@@ -289,17 +242,16 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v4.0 - Enhanced with Pre-Call CLID Recognition!',
+    status: '🧠 ElevenLabs Memory API v4.1 - Clean & Stable!',
     features: [
-      'Pre-call webhook with CLID recognition',
       'Smart name-based memory lookup',
       'Temporal context awareness', 
       'Memory cleanup and deduplication',
-      'Personalized greetings for returning callers'
+      'Clear all memories endpoint',
+      'Stable post-call webhook integration'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
-      precall_webhook: '/webhook/precall',
       postcall_webhook: '/webhook/elevenlabs', 
       debug: '/debug/memory',
       cleanup: '/api/memory/cleanup',
@@ -312,6 +264,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Memory API v4.0 running on port ${PORT}`);
-  console.log(`📱 Now includes pre-call CLID recognition for personalized greetings!`);
+  console.log(`🚀 Clean Memory API v4.1 running on port ${PORT}`);
+  console.log(`✨ Removed problematic pre-call webhook - back to stable operation!`);
 });
