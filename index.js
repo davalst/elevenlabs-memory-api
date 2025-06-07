@@ -199,6 +199,20 @@ app.post('/api/memory/cleanup', (req, res) => {
   });
 });
 
+// Clear all memories endpoint
+app.post('/api/memory/clear-all', (req, res) => {
+  console.log('🗑️ Clearing all memories...');
+  const userCount = userMemory.size;
+  userMemory.clear();
+  
+  console.log(`✅ Cleared ${userCount} user records`);
+  res.json({ 
+    message: 'All memories cleared successfully',
+    cleared_users: userCount,
+    total_users: userMemory.size 
+  });
+});
+
 // Enhanced post-call webhook
 app.post('/webhook/elevenlabs', (req, res) => {
   console.log('📞 Post-call webhook received');
@@ -288,7 +302,8 @@ app.get('/', (req, res) => {
       precall_webhook: '/webhook/precall',
       postcall_webhook: '/webhook/elevenlabs', 
       debug: '/debug/memory',
-      cleanup: '/api/memory/cleanup'
+      cleanup: '/api/memory/cleanup',
+      clear_all: '/api/memory/clear-all'
     },
     stored_users: userMemory.size,
     timestamp: new Date().toISOString()
