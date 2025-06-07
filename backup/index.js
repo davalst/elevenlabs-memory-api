@@ -16,6 +16,10 @@ const DATA_DIR = process.env.NODE_ENV === 'production'
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const PROMPT_FILE = path.join(DATA_DIR, 'system-prompt.txt');
+
+// Add fetch support for Node.js
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 // Serve static admin files
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
@@ -24,6 +28,9 @@ app.use('/admin', express.static(path.join(__dirname, 'admin')));
 let userMemory = new Map();
 let users = new Map();
 let userIdCounter = 1;
+
+// System prompt storage
+let systemPrompt = '';
 
 // Initialize data directory and load data
 async function initializeData() {
@@ -55,6 +62,15 @@ async function initializeData() {
       await fs.writeFile(MEMORY_FILE, '{}');
     }
     
+    // Load system prompt
+    try {
+      systemPrompt = await fs.readFile(PROMPT_FILE, 'utf-8');
+      console.log('🤖 Loaded system prompt from persistent storage');
+    } catch (error) {
+      console.log('Creating empty system prompt file');
+      await fs.writeFile(PROMPT_FILE, '');
+    }
+    
   } catch (error) {
     console.error('Error initializing data:', error);
   }
@@ -71,11 +87,18 @@ async function saveMemory() {
   await fs.writeFile(MEMORY_FILE, JSON.stringify(data, null, 2));
 }
 
+async function saveSystemPrompt() {
+  await fs.writeFile(PROMPT_FILE, systemPrompt);
+}
+
 // Initialize data on startup
 initializeData();
 
 // JWT secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
+
+// Anthropic API configuration
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // Helper function to get time since last call
 function getTimeSinceLastCall(lastCallTime) {
@@ -89,6 +112,49 @@ function getTimeSinceLastCall(lastCallTime) {
   if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
   if (diffMinutes < 1440) return `${Math.round(diffMinutes / 60)} hours ago`;
   return `${Math.round(diffMinutes / 1440)} days ago`;
+}
+
+// Helper function to call Anthropic API
+async function callAnthropicAPI(messages, userContext = '') {
+  if (!ANTHROPIC_API_KEY) {
+    console.log('⚠️ No Anthropic API key configured, using fallback responses');
+    throw new Error('Anthropic API key not configured');
+  }
+
+  const systemMessage = userContext ? 
+    `${systemPrompt}\n\nUser Context:\n${userContext}` : 
+    systemPrompt;
+
+  try {
+    console.log('🤖 Calling Anthropic API...');
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-sonnet-20240229',
+        max_tokens: 1000,
+        system: systemMessage,
+        messages: messages
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Anthropic API error:', response.status, errorText);
+      throw new Error(`Anthropic API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Anthropic API response received');
+    return data.content[0].text;
+  } catch (error) {
+    console.error('Anthropic API call failed:', error);
+    throw error;
+  }
 }
 
 // ================================
@@ -225,6 +291,33 @@ app.delete('/admin/users/:id', (req, res) => {
   }
 });
 
+// System prompt endpoints
+app.get('/admin/system-prompt', (req, res) => {
+  res.json({ systemPrompt: systemPrompt });
+});
+
+app.post('/admin/system-prompt', async (req, res) => {
+  try {
+    const { systemPrompt: newPrompt } = req.body;
+    
+    if (!newPrompt || typeof newPrompt !== 'string') {
+      return res.status(400).json({ error: 'System prompt is required and must be a string' });
+    }
+    
+    systemPrompt = newPrompt;
+    await saveSystemPrompt();
+    console.log('🤖 System prompt updated');
+    
+    res.json({ 
+      message: 'System prompt updated successfully',
+      systemPrompt: systemPrompt 
+    });
+  } catch (error) {
+    console.error('Error updating system prompt:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ================================
 // AUTHENTICATION ENDPOINTS
 // ================================
@@ -324,9 +417,104 @@ app.get('/mobile', (req, res) => {
   res.sendFile(path.join(__dirname, 'mobile.html'));
 });
 
-// ================================
-// MEMORY ENDPOINTS
-// ================================
+// Enhanced chat endpoint with proper LLM integration
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, user_id, caller_id } = req.body;
+    
+    // Verify JWT token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    console.log(`💬 Chat message from ${user_id}: ${message}`);
+    
+    let aiResponse;
+    
+    try {
+      // Use Anthropic API for enhanced responses
+      const messages = [
+        { role: 'user', content: message }
+      ];
+      
+      aiResponse = await callAnthropicAPI(messages);
+      console.log('✅ Using Anthropic Claude response');
+    } catch (error) {
+      console.error('Anthropic API failed, falling back to simple responses:', error);
+      aiResponse = generateSimpleAIResponse(message);
+      console.log('⚠️ Using fallback response');
+    }
+    
+    res.json({ response: aiResponse });
+    
+  } catch (error) {
+    console.error('Chat error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Fallback simple AI response function
+function generateSimpleAIResponse(message) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Greeting responses
+  if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
+    return "Hello! I'm Duuo, your AI goal coach. I'm here to help you align your goals and get things done. What's on your mind today?";
+  }
+  
+  // Goal-related responses
+  if (lowerMessage.includes('goal') || lowerMessage.includes('objective') || lowerMessage.includes('target')) {
+    return "I'd love to help you with your goals! Can you tell me more about what you're trying to achieve? I can help you break it down into manageable steps using frameworks like OKRs or SMART goals.";
+  }
+  
+  // Work/project responses
+  if (lowerMessage.includes('work') || lowerMessage.includes('project') || lowerMessage.includes('team')) {
+    return "That sounds like an important work matter. How does this align with your overall objectives? I can help you prioritize and create a plan to move forward effectively.";
+  }
+  
+  // Personal responses
+  if (lowerMessage.includes('weekend') || lowerMessage.includes('hobby') || lowerMessage.includes('free time')) {
+    return "It's great that you're thinking about work-life balance! Personal time and hobbies are important for staying motivated. How do your personal activities help you recharge for your professional goals?";
+  }
+  
+  // Default coaching response
+  return "I hear you. Let's explore this together. Can you tell me more about the situation? I'm here to help you think through it and find a path forward that aligns with your bigger picture goals.";
+}
+
+// Extract information from user messages
+function extractInformationFromMessage(message) {
+  const info = {};
+  const lowerMessage = message.toLowerCase();
+  
+  // Extract goals
+  if (lowerMessage.includes('my goal is') || lowerMessage.includes('i want to') || lowerMessage.includes('trying to')) {
+    info.recent_goals = message;
+  }
+  
+  // Extract current mood/feelings
+  if (lowerMessage.includes('feeling') || lowerMessage.includes('excited') || lowerMessage.includes('stressed') || lowerMessage.includes('happy') || lowerMessage.includes('frustrated')) {
+    info.current_mood = message;
+  }
+  
+  // Extract work information
+  if (lowerMessage.includes('my job') || lowerMessage.includes('i work') || lowerMessage.includes('my company')) {
+    info.work_info = message;
+  }
+  
+  // Extract personal information
+  if (lowerMessage.includes('my hobby') || lowerMessage.includes('i like') || lowerMessage.includes('i enjoy')) {
+    info.interests = message;
+  }
+  
+  return info;
+}
 
 // Get user memories endpoint
 app.get('/api/memory/user/:userId', (req, res) => {
@@ -369,6 +557,10 @@ app.get('/api/memory/user/:userId', (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// ================================
+// EXISTING MEMORY ENDPOINTS
+// ================================
 
 // Enhanced memory tool endpoint
 app.post('/api/memory/remember', async (req, res) => {
@@ -587,29 +779,26 @@ app.post('/webhook/elevenlabs', async (req, res) => {
   res.status(200).json({ message: 'Post-call data processed successfully' });
 });
 
-// Debug memory endpoint
+// Enhanced debug endpoint
 app.get('/debug/memory', (req, res) => {
-  console.log('🔍 Debug memory request received');
-  
-  const memoryData = Array.from(userMemory.entries()).map(([key, value]) => ({
-    key,
-    ...value,
-    memory_size: JSON.stringify(value).length
-  }));
-  
+  const allMemory = {};
+  for (let [key, value] of userMemory.entries()) {
+    allMemory[key] = {
+      ...value,
+      timeSinceLastCall: getTimeSinceLastCall(value.last_call_time),
+      memoryAge: getTimeSinceLastCall(value.first_created || value.last_call_time)
+    };
+  }
   res.json({
     total_users: userMemory.size,
-    memory_entries: memoryData,
-    timestamp: new Date().toISOString()
+    memory_data: allMemory
   });
 });
 
 // Enhanced health check
 app.get('/', (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Content-Type', 'application/json');
-  res.status(200).json({ 
-    status: '🧠 Duuo Memory API v8.0',
+  res.json({ 
+    status: '🧠 Duuo Memory API v8.0 - With Enhanced LLM Integration & Fixed Fetch!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
@@ -618,8 +807,11 @@ app.get('/', (req, res) => {
       'Admin panel for user management',
       'JWT token authentication',
       'Progressive Web App (Mobile)',
-      'Voice Integration',
-      'Memory Viewer'
+      'Chat and Voice Integration',
+      'Memory Viewer',
+      'Anthropic Claude Integration',
+      'System Prompt Management',
+      'Fixed Node.js Fetch Support'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
@@ -631,18 +823,22 @@ app.get('/', (req, res) => {
       auth_login: '/auth/login',
       auth_verify: '/auth/verify',
       mobile_app: '/mobile',
-      user_memory: '/api/memory/user/:userId'
+      mobile_chat: '/api/chat',
+      user_memory: '/api/memory/user/:userId',
+      system_prompt: '/admin/system-prompt'
     },
     stored_users: userMemory.size,
     registered_users: users.size,
+    llm_integration: ANTHROPIC_API_KEY ? 'Anthropic Claude API ✅' : 'Simple Fallback (set ANTHROPIC_API_KEY)',
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Duuo Memory API v8.0 running on port ${PORT}`);
+  console.log(`🚀 Enhanced Duuo Memory API v8.0 with Fixed LLM Integration running on port ${PORT}`);
   console.log(`👥 Admin panel available at: /admin`);
   console.log(`📱 Mobile app available at: /mobile`);
+  console.log(`🤖 LLM Integration: ${ANTHROPIC_API_KEY ? 'Anthropic Claude API ✅' : 'Simple Fallback (set ANTHROPIC_API_KEY)'}`);
   console.log(`🔐 Authentication system ready!`);
 });
