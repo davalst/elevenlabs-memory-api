@@ -218,7 +218,8 @@ app.post('/auth/login', async (req, res) => {
       user: {
         id: foundUser.id,
         email: foundUser.email,
-        fullName: foundUser.fullName
+        fullName: foundUser.fullName,
+        phoneNumber: foundUser.phoneNumber
       }
     });
   } catch (error) {
@@ -248,13 +249,212 @@ app.get('/auth/verify', (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        fullName: user.fullName
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber
       }
     });
   } catch (error) {
     res.status(401).json({ error: 'Invalid token' });
   }
 });
+
+// ================================
+// MOBILE APP ENDPOINTS
+// ================================
+
+// Serve mobile app
+app.get('/mobile', (req, res) => {
+  res.sendFile(path.join(__dirname, 'mobile.html'));
+});
+
+// Chat endpoint for mobile app
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, user_id, caller_id } = req.body;
+    
+    // Verify JWT token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    console.log(`💬 Chat message from ${user_id}: ${message}`);
+    
+    // First, retrieve user memory for context
+    let userContext = '';
+    let userData = null;
+    let foundKey = null;
+    
+    // Try to find user by caller_id (phone) first, then by user_id (name)
+    if (caller_id) {
+      for (let [key, data] of userMemory.entries()) {
+        if (data.phone_number === caller_id || data.caller_id === caller_id) {
+          userData = data;
+          foundKey = key;
+          break;
+        }
+      }
+    }
+    
+    if (!userData && user_id) {
+      userData = userMemory.get(user_id);
+      foundKey = user_id;
+      
+      if (!userData) {
+        for (let [key, data] of userMemory.entries()) {
+          if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
+            userData = data;
+            foundKey = key;
+            break;
+          }
+        }
+      }
+    }
+    
+    if (userData) {
+      userContext = `Previous context about ${foundKey}: ${JSON.stringify(userData, null, 2)}`;
+    }
+    
+    // Simple AI response system (you can enhance this later with OpenAI API)
+    const aiResponse = generateAIResponse(message, userContext, foundKey || user_id);
+    
+    // Extract any new information from the conversation to store
+    const newInfo = extractInformationFromMessage(message);
+    
+    // Update user memory if new information was shared
+    if (Object.keys(newInfo).length > 0) {
+      const storageKey = foundKey || user_id || caller_id || 'unknown_user';
+      const existing = userMemory.get(storageKey) || {};
+      const updated = {
+        ...existing,
+        ...newInfo,
+        fullname: user_id || existing.fullname,
+        phone_number: caller_id || existing.phone_number,
+        last_updated: new Date().toISOString(),
+        last_call_time: new Date().toISOString(),
+        first_created: existing.first_created || new Date().toISOString(),
+        conversation_count: (existing.conversation_count || 0) + 1,
+        last_message_via: 'mobile_chat'
+      };
+      
+      userMemory.set(storageKey, updated);
+      console.log(`💾 Updated memory for ${storageKey}:`, newInfo);
+    }
+    
+    res.json({ response: aiResponse });
+    
+  } catch (error) {
+    console.error('Chat error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user memories endpoint
+app.get('/api/memory/user/:userId', (req, res) => {
+  try {
+    const userId = decodeURIComponent(req.params.userId);
+    
+    // Verify JWT token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    // Find user memory
+    let userData = userMemory.get(userId);
+    
+    // If not found by exact match, try partial match
+    if (!userData) {
+      for (let [key, data] of userMemory.entries()) {
+        if (key.includes(userId) || userId.includes(key.split(' ')[0])) {
+          userData = data;
+          break;
+        }
+      }
+    }
+    
+    if (userData) {
+      res.json(userData);
+    } else {
+      res.status(404).json({ error: 'No memories found for this user' });
+    }
+    
+  } catch (error) {
+    console.error('Memory retrieval error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Simple AI response generator (basic version - you can enhance this)
+function generateAIResponse(message, context, userName) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Greeting responses
+  if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
+    if (userName && userName !== 'unknown_user') {
+      return `Hello ${userName}! Great to hear from you. How are you doing today? What would you like to work on?`;
+    }
+    return "Hello! I'm your AI goal coach. I'm here to help you align your goals and get things done. What's on your mind today?";
+  }
+  
+  // Goal-related responses
+  if (lowerMessage.includes('goal') || lowerMessage.includes('objective') || lowerMessage.includes('target')) {
+    return "I'd love to help you with your goals! Can you tell me more about what you're trying to achieve? I can help you break it down into manageable steps using frameworks like OKRs or SMART goals.";
+  }
+  
+  // Work/project responses
+  if (lowerMessage.includes('work') || lowerMessage.includes('project') || lowerMessage.includes('team')) {
+    return "That sounds like an important work matter. How does this align with your overall objectives? I can help you prioritize and create a plan to move forward effectively.";
+  }
+  
+  // Personal responses
+  if (lowerMessage.includes('weekend') || lowerMessage.includes('hobby') || lowerMessage.includes('free time')) {
+    return "It's great that you're thinking about work-life balance! Personal time and hobbies are important for staying motivated. How do your personal activities help you recharge for your professional goals?";
+  }
+  
+  // Default coaching response
+  return "I hear you. Let's explore this together. Can you tell me more about the situation? I'm here to help you think through it and find a path forward that aligns with your bigger picture goals.";
+}
+
+// Extract information from user messages
+function extractInformationFromMessage(message) {
+  const info = {};
+  const lowerMessage = message.toLowerCase();
+  
+  // Extract goals
+  if (lowerMessage.includes('my goal is') || lowerMessage.includes('i want to') || lowerMessage.includes('trying to')) {
+    info.recent_goals = message;
+  }
+  
+  // Extract current mood/feelings
+  if (lowerMessage.includes('feeling') || lowerMessage.includes('excited') || lowerMessage.includes('stressed') || lowerMessage.includes('happy') || lowerMessage.includes('frustrated')) {
+    info.current_mood = message;
+  }
+  
+  // Extract work information
+  if (lowerMessage.includes('my job') || lowerMessage.includes('i work') || lowerMessage.includes('my company')) {
+    info.work_info = message;
+  }
+  
+  // Extract personal information
+  if (lowerMessage.includes('my hobby') || lowerMessage.includes('i like') || lowerMessage.includes('i enjoy')) {
+    info.interests = message;
+  }
+  
+  return info;
+}
 
 // ================================
 // EXISTING MEMORY ENDPOINTS
@@ -495,14 +695,17 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v5.0 - With Admin Panel!',
+    status: '🧠 ElevenLabs Memory API v6.0 - With Mobile App!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
       'Memory cleanup and deduplication',
       'User authentication system',
       'Admin panel for user management',
-      'JWT token authentication'
+      'JWT token authentication',
+      'Progressive Web App (Mobile)',
+      'Chat and Voice Integration',
+      'Memory Viewer'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
@@ -512,7 +715,10 @@ app.get('/', (req, res) => {
       clear_all: '/api/memory/clear-all',
       admin_panel: '/admin',
       auth_login: '/auth/login',
-      auth_verify: '/auth/verify'
+      auth_verify: '/auth/verify',
+      mobile_app: '/mobile',
+      mobile_chat: '/api/chat',
+      user_memory: '/api/memory/user/:userId'
     },
     stored_users: userMemory.size,
     registered_users: users.size,
@@ -522,7 +728,8 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Memory API v5.0 running on port ${PORT}`);
+  console.log(`🚀 Enhanced Memory API v6.0 with Mobile App running on port ${PORT}`);
   console.log(`👥 Admin panel available at: /admin`);
+  console.log(`📱 Mobile app available at: /mobile`);
   console.log(`🔐 Authentication system ready!`);
 });
