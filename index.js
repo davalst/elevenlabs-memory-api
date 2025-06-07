@@ -29,11 +29,24 @@ app.post('/api/memory/remember', (req, res) => {
   console.log(`🧠 Memory ${action} for user: ${user_id}, caller: ${caller_id}`);
   
   if (action === 'retrieve') {
-    // Find user by name (primary method)
+    // Find user by name (primary method) OR by phone number
     let userData = null;
     let foundKey = null;
     
-    if (user_id) {
+    // First try to find by phone number (most reliable for returning callers)
+    if (caller_id && caller_id !== 'undefined' && !caller_id.includes('{{')) {
+      for (let [key, data] of userMemory.entries()) {
+        if (data.phone_number === caller_id || data.caller_id === caller_id) {
+          userData = data;
+          foundKey = key;
+          console.log(`🎯 Found user by phone number: ${foundKey} (${caller_id})`);
+          break;
+        }
+      }
+    }
+    
+    // If not found by phone, try by name
+    if (!userData && user_id) {
       // Try exact match first
       userData = userMemory.get(user_id);
       foundKey = user_id;
@@ -44,6 +57,7 @@ app.post('/api/memory/remember', (req, res) => {
           if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
             userData = data;
             foundKey = key;
+            console.log(`📝 Found user by name match: ${foundKey}`);
             break;
           }
         }
@@ -86,7 +100,7 @@ app.post('/api/memory/remember', (req, res) => {
     const updated = { 
       ...existing, 
       ...details,
-      phone_number: caller_id || existing.phone_number,
+      phone_number: caller_id && caller_id !== 'undefined' && !caller_id.includes('{{') ? caller_id : existing.phone_number,
       caller_id: caller_id || existing.caller_id,
       last_updated: new Date().toISOString(),
       last_call_time: new Date().toISOString(),
@@ -96,11 +110,12 @@ app.post('/api/memory/remember', (req, res) => {
     
     userMemory.set(storageKey, updated);
     
-    console.log('💾 Stored memory:', updated);
+    console.log('💾 Stored memory with phone:', updated);
     return res.json({ 
       success: true, 
       message: `Remembered details about ${updated.fullname || storageKey}`,
-      caller_id: caller_id
+      caller_id: caller_id,
+      phone_stored: updated.phone_number
     });
   }
   
@@ -242,7 +257,7 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v4.1 - Clean & Stable!',
+    status: '🧠 ElevenLabs Memory API v4.2 - Enhanced Phone Number Recognition!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
