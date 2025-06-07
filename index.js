@@ -3,10 +3,20 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const fs = require('fs').promises;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// File paths for persistence
+const DATA_DIR = process.env.NODE_ENV === 'production' 
+  ? '/opt/render/project/src/data'
+  : path.join(__dirname, 'data');
+
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const PROMPT_FILE = path.join(DATA_DIR, 'system-prompt.txt');
 
 // Add fetch support for Node.js
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
@@ -14,61 +24,75 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 // Serve static admin files
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// Enhanced memory storage
+// Enhanced memory storage with persistence
 let userMemory = new Map();
-
-// Simple user storage (in-memory for now, will upgrade to database later)
 let users = new Map();
 let userIdCounter = 1;
 
 // System prompt storage
-let systemPrompt = `Personality
-You are an empathetic startup goal coach at Duuo, here to help users and their teammates align their initiatives and goals to the startup's plan, enabling better and faster execution. Like any good human coach it is important to build trust and rapport with the user. This means really getting to know them empathetically and remembering nuanced things about them. It's about building a human-like relationship FIRST before jumping into business talk about goals and updates.
-Your coaching style is warm, curious, and genuinely interested in the person. You love learning about their hobbies, current mood, recent wins, and what's exciting them. You're a world expert in OKRs, V2MOMs, and SMART Goal setting but you always prioritize the human connection.
+let systemPrompt = '';
 
-Memory & Recognition
-At the start of every conversation: check if you know this person by reviewing their context. If you have previous conversation history, greet them warmly by name and reference something personal from your last conversation. If this is a new user, make sure you ask for their first and last name.
+// Initialize data directory and load data
+async function initializeData() {
+  try {
+    // Create data directory if it doesn't exist
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    console.log(`📁 Data directory ensured at ${DATA_DIR}`);
+    
+    // Load users
+    try {
+      const userData = await fs.readFile(USERS_FILE, 'utf-8');
+      const loadedUsers = JSON.parse(userData);
+      users = new Map(Object.entries(loadedUsers));
+      userIdCounter = Math.max(...Array.from(users.keys())) + 1;
+      console.log('👥 Loaded users from persistent storage');
+    } catch (error) {
+      console.log('Creating new users file');
+      await fs.writeFile(USERS_FILE, '{}');
+    }
+    
+    // Load memory
+    try {
+      const memoryData = await fs.readFile(MEMORY_FILE, 'utf-8');
+      const loadedMemory = JSON.parse(memoryData);
+      userMemory = new Map(Object.entries(loadedMemory));
+      console.log('🧠 Loaded memory from persistent storage');
+    } catch (error) {
+      console.log('Creating new memory file');
+      await fs.writeFile(MEMORY_FILE, '{}');
+    }
+    
+    // Load system prompt
+    try {
+      systemPrompt = await fs.readFile(PROMPT_FILE, 'utf-8');
+      console.log('🤖 Loaded system prompt from persistent storage');
+    } catch (error) {
+      console.log('Creating empty system prompt file');
+      await fs.writeFile(PROMPT_FILE, '');
+    }
+    
+  } catch (error) {
+    console.error('Error initializing data:', error);
+  }
+}
 
-IMPORTANT: When referencing past events, pay attention to when the memory was created. If someone mentioned future plans (like camping this weekend) and the memory is from days ago, ask how it went. If the memory is recent (minutes/hours), those plans likely haven't happened yet.
-During conversation: Store interesting details about them for future reference.
+// Save data to disk
+async function saveUsers() {
+  const data = Object.fromEntries(users);
+  await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2));
+}
 
-Environment
-You are engaged in a conversation with a user who is likely seeking guidance on aligning their work with the startup's overall objectives. The user may be a founder, manager, or team member. Before diving into goal-setting, dedicate time to casual conversation to build rapport and understand the user's current state of mind.
+async function saveMemory() {
+  const data = Object.fromEntries(userMemory);
+  await fs.writeFile(MEMORY_FILE, JSON.stringify(data, null, 2));
+}
 
-Tone
-Your responses are warm, encouraging, and insightful. You are curious and ask clarifying questions to understand the user's specific situation and build rapport. You explain complex goal-setting frameworks in simple, actionable terms. You use a conversational style with natural speech patterns, including brief affirmations ("I understand," "That's interesting"), thoughtful pauses, and open-ended questions to encourage sharing. Emphasize active listening and empathy in your tone.
-Keep responses concise and conversational. After making your point, PAUSE and wait for the user to respond. Do NOT repeat yourself.
+async function saveSystemPrompt() {
+  await fs.writeFile(PROMPT_FILE, systemPrompt);
+}
 
-Goal
-Your primary goal is to help the user effectively align their initiatives and goals with the startup's plan, using your expertise in OKRs, V2MOMs, and SMART Goals. Prioritize building rapport and trust before diving into business objectives.
-
-Initial Rapport Building:
-- Engage in casual conversation to build rapport
-- Ask about their day, weekend plans, or recent work experiences
-- Actively listen and respond empathetically to their answers
-- Remember and reference details from previous conversations to personalize the interaction
-
-Understanding the User's Context:
-- Ask clarifying questions to understand the user's role, team, and current goals
-- Inquire about the startup's overall plan, objectives, and key performance indicators
-- Identify any challenges or roadblocks the user is facing in aligning their work with the startup's goals
-
-Applying Goal-Setting Frameworks:
-- Based on the user's context, recommend the most appropriate goal-setting framework (OKR, V2MOM, or SMART Goals)
-- Explain the key principles of the chosen framework and how it can be applied to the user's situation
-- Provide step-by-step guidance on setting objectives, key results, and initiatives
-
-Alignment and Execution Strategies:
-- Help the user align their individual or team goals with the startup's overall objectives
-- Suggest strategies for tracking progress, measuring success, and making adjustments as needed
-- Offer tips for effective communication and collaboration within the team
-
-Resource Sharing and Support:
-- Provide relevant advice and strategies
-- Offer ongoing support and encouragement to help the user achieve their goals
-
-Guardrails
-Remain within the scope of goal-setting and alignment strategies. Avoid giving advice on topics outside of your expertise, such as legal or financial matters. Do not provide specific personal advice. Maintain a professional and respectful tone at all times. If the user expresses frustration, acknowledge their feelings and offer support. Do not become overly personal or pry into sensitive personal matters.`;
+// Initialize data on startup
+initializeData();
 
 // JWT secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
@@ -191,6 +215,7 @@ app.post('/admin/users', async (req, res) => {
     };
     
     users.set(newUser.id, newUser);
+    await saveUsers();
     
     // Create initial memory entry for this user
     const initialMemory = {
@@ -204,8 +229,8 @@ app.post('/admin/users', async (req, res) => {
       status: 'registered'
     };
     
-    // Store memory using full name as key (consistent with voice system)
     userMemory.set(fullName, initialMemory);
+    await saveMemory();
     
     console.log(`👤 New user created: ${email} (${fullName}) - Memory initialized`);
     
@@ -271,7 +296,7 @@ app.get('/admin/system-prompt', (req, res) => {
   res.json({ systemPrompt: systemPrompt });
 });
 
-app.post('/admin/system-prompt', (req, res) => {
+app.post('/admin/system-prompt', async (req, res) => {
   try {
     const { systemPrompt: newPrompt } = req.body;
     
@@ -280,6 +305,7 @@ app.post('/admin/system-prompt', (req, res) => {
     }
     
     systemPrompt = newPrompt;
+    await saveSystemPrompt();
     console.log('🤖 System prompt updated');
     
     res.json({ 
@@ -410,51 +436,6 @@ app.post('/api/chat', async (req, res) => {
     
     console.log(`💬 Chat message from ${user_id}: ${message}`);
     
-    // Retrieve user memory for context
-    let userContext = '';
-    let userData = null;
-    let foundKey = null;
-    
-    // Try to find user by caller_id (phone) first, then by user_id (name)
-    if (caller_id) {
-      for (let [key, data] of userMemory.entries()) {
-        if (data.phone_number === caller_id || data.caller_id === caller_id) {
-          userData = data;
-          foundKey = key;
-          break;
-        }
-      }
-    }
-    
-    if (!userData && user_id) {
-      userData = userMemory.get(user_id);
-      foundKey = user_id;
-      
-      if (!userData) {
-        for (let [key, data] of userMemory.entries()) {
-          if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
-            userData = data;
-            foundKey = key;
-            break;
-          }
-        }
-      }
-    }
-    
-    if (userData) {
-      const timeSince = getTimeSinceLastCall(userData.last_call_time);
-      const memoryAge = getTimeSinceLastCall(userData.first_created || userData.last_call_time);
-      
-      userContext = `User: ${foundKey}
-Last interaction: ${timeSince || 'First time'}
-Memory created: ${memoryAge || 'Just now'}
-User details: ${JSON.stringify(userData, null, 2)}
-
-Remember to reference their past conversations and build on your relationship. If they mentioned future plans in past conversations and enough time has passed, ask how those went.`;
-    } else {
-      userContext = `This appears to be a new user (${user_id}). Focus on building rapport and learning about them.`;
-    }
-    
     let aiResponse;
     
     try {
@@ -463,35 +444,12 @@ Remember to reference their past conversations and build on your relationship. I
         { role: 'user', content: message }
       ];
       
-      aiResponse = await callAnthropicAPI(messages, userContext);
+      aiResponse = await callAnthropicAPI(messages);
       console.log('✅ Using Anthropic Claude response');
     } catch (error) {
       console.error('Anthropic API failed, falling back to simple responses:', error);
-      aiResponse = generateSimpleAIResponse(message, userContext, foundKey || user_id);
+      aiResponse = generateSimpleAIResponse(message);
       console.log('⚠️ Using fallback response');
-    }
-    
-    // Extract and store new information from the conversation
-    const newInfo = extractInformationFromMessage(message);
-    
-    // Update user memory if new information was shared
-    if (Object.keys(newInfo).length > 0 || !userData) {
-      const storageKey = foundKey || user_id || caller_id || 'unknown_user';
-      const existing = userMemory.get(storageKey) || {};
-      const updated = {
-        ...existing,
-        ...newInfo,
-        fullname: user_id || existing.fullname,
-        phone_number: caller_id || existing.phone_number,
-        last_updated: new Date().toISOString(),
-        last_call_time: new Date().toISOString(),
-        first_created: existing.first_created || new Date().toISOString(),
-        conversation_count: (existing.conversation_count || 0) + 1,
-        last_message_via: 'mobile_chat'
-      };
-      
-      userMemory.set(storageKey, updated);
-      console.log(`💾 Updated memory for ${storageKey}:`, newInfo);
     }
     
     res.json({ response: aiResponse });
@@ -503,14 +461,11 @@ Remember to reference their past conversations and build on your relationship. I
 });
 
 // Fallback simple AI response function
-function generateSimpleAIResponse(message, context, userName) {
+function generateSimpleAIResponse(message) {
   const lowerMessage = message.toLowerCase();
   
   // Greeting responses
   if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
-    if (userName && userName !== 'unknown_user') {
-      return `Hello ${userName}! Great to hear from you. How are you doing today? What would you like to work on?`;
-    }
     return "Hello! I'm Duuo, your AI goal coach. I'm here to help you align your goals and get things done. What's on your mind today?";
   }
   
@@ -608,7 +563,7 @@ app.get('/api/memory/user/:userId', (req, res) => {
 // ================================
 
 // Enhanced memory tool endpoint
-app.post('/api/memory/remember', (req, res) => {
+app.post('/api/memory/remember', async (req, res) => {
   const { action, user_id, details, caller_id } = req.body;
   
   console.log(`🧠 Memory ${action} for user: ${user_id}, caller: ${caller_id}`);
@@ -678,7 +633,6 @@ app.post('/api/memory/remember', (req, res) => {
   }
   
   if (action === 'store') {
-    // Determine the storage key (prefer user_id/name, fallback to caller_id)
     const storageKey = user_id || caller_id || 'unknown_user';
     
     const existing = userMemory.get(storageKey) || {};
@@ -694,6 +648,7 @@ app.post('/api/memory/remember', (req, res) => {
     };
     
     userMemory.set(storageKey, updated);
+    await saveMemory();
     
     console.log('💾 Stored memory with phone:', updated);
     return res.json({ 
@@ -767,7 +722,7 @@ app.post('/api/memory/cleanup', (req, res) => {
 });
 
 // Post-call webhook
-app.post('/webhook/elevenlabs', (req, res) => {
+app.post('/webhook/elevenlabs', async (req, res) => {
   console.log('📞 Post-call webhook received');
   const { data } = req.body;
   
@@ -817,6 +772,7 @@ app.post('/webhook/elevenlabs', (req, res) => {
     };
     
     userMemory.set(existingKey, updated);
+    await saveMemory();
     console.log(`📋 Updated user profile for ${existingKey} (caller: ${caller_id})`);
   }
   
