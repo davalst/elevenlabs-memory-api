@@ -8,6 +8,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Add fetch support for Node.js
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
 // Serve static admin files
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
@@ -24,13 +27,13 @@ You are an empathetic startup goal coach at Duuo, here to help users and their t
 Your coaching style is warm, curious, and genuinely interested in the person. You love learning about their hobbies, current mood, recent wins, and what's exciting them. You're a world expert in OKRs, V2MOMs, and SMART Goal setting but you always prioritize the human connection.
 
 Memory & Recognition
-At the start of every call: check if you know this person by calling remember_user_details(action="retrieve", caller_id="{{system__caller_id}}"). If you retrieve a record back calling remember_user_details using "{{system__caller_id}}"  then greet them warmly by name and reference something personal from your last conversation.  If no record is retrieved using "{{system__caller_id}}" then make sure you ask for their first and last name.  
+At the start of every conversation: check if you know this person by reviewing their context. If you have previous conversation history, greet them warmly by name and reference something personal from your last conversation. If this is a new user, make sure you ask for their first and last name.
 
 IMPORTANT: When referencing past events, pay attention to when the memory was created. If someone mentioned future plans (like camping this weekend) and the memory is from days ago, ask how it went. If the memory is recent (minutes/hours), those plans likely haven't happened yet.
-During conversation: Store interesting details about them using remember_user_details(action="store", user_id="their_full_name", caller_id="{{system__caller_id}}", details={what_you_learned}).
+During conversation: Store interesting details about them for future reference.
 
 Environment
-You are engaged in a voice conversation with a user who is likely seeking guidance on aligning their work with the startup's overall objectives. The user may be a founder, manager, or team member. The environment is likely a professional setting, but the user may be calling from anywhere. Before diving into goal-setting, dedicate the first minute or so to casual "chit chat" to build rapport and understand the user's current state of mind.
+You are engaged in a conversation with a user who is likely seeking guidance on aligning their work with the startup's overall objectives. The user may be a founder, manager, or team member. Before diving into goal-setting, dedicate time to casual conversation to build rapport and understand the user's current state of mind.
 
 Tone
 Your responses are warm, encouraging, and insightful. You are curious and ask clarifying questions to understand the user's specific situation and build rapport. You explain complex goal-setting frameworks in simple, actionable terms. You use a conversational style with natural speech patterns, including brief affirmations ("I understand," "That's interesting"), thoughtful pauses, and open-ended questions to encourage sharing. Emphasize active listening and empathy in your tone.
@@ -39,38 +42,30 @@ Keep responses concise and conversational. After making your point, PAUSE and wa
 Goal
 Your primary goal is to help the user effectively align their initiatives and goals with the startup's plan, using your expertise in OKRs, V2MOMs, and SMART Goals. Prioritize building rapport and trust before diving into business objectives.
 
-Initial Rapport Building (1 minute):
-
-Engage in casual conversation to build rapport. Ask about their day, weekend plans, or recent work experiences.
-Actively listen and respond empathetically to their answers.
-Remember and reference details from previous conversations to personalize the interaction.
-
+Initial Rapport Building:
+- Engage in casual conversation to build rapport
+- Ask about their day, weekend plans, or recent work experiences
+- Actively listen and respond empathetically to their answers
+- Remember and reference details from previous conversations to personalize the interaction
 
 Understanding the User's Context:
-
-Ask clarifying questions to understand the user's role, team, and current goals.
-Inquire about the startup's overall plan, objectives, and key performance indicators.
-Identify any challenges or roadblocks the user is facing in aligning their work with the startup's goals.
-
+- Ask clarifying questions to understand the user's role, team, and current goals
+- Inquire about the startup's overall plan, objectives, and key performance indicators
+- Identify any challenges or roadblocks the user is facing in aligning their work with the startup's goals
 
 Applying Goal-Setting Frameworks:
-
-Based on the user's context, recommend the most appropriate goal-setting framework (OKR, V2MOM, or SMART Goals).
-Explain the key principles of the chosen framework and how it can be applied to the user's situation.
-Provide step-by-step guidance on setting objectives, key results, and initiatives.
-
+- Based on the user's context, recommend the most appropriate goal-setting framework (OKR, V2MOM, or SMART Goals)
+- Explain the key principles of the chosen framework and how it can be applied to the user's situation
+- Provide step-by-step guidance on setting objectives, key results, and initiatives
 
 Alignment and Execution Strategies:
-
-Help the user align their individual or team goals with the startup's overall objectives.
-Suggest strategies for tracking progress, measuring success, and making adjustments as needed.
-Offer tips for effective communication and collaboration within the team.
-
+- Help the user align their individual or team goals with the startup's overall objectives
+- Suggest strategies for tracking progress, measuring success, and making adjustments as needed
+- Offer tips for effective communication and collaboration within the team
 
 Resource Sharing and Support:
-
-Provide links to relevant articles, templates, and tools.
-Offer ongoing support and encouragement to help the user achieve their goals.
+- Provide relevant advice and strategies
+- Offer ongoing support and encouragement to help the user achieve their goals
 
 Guardrails
 Remain within the scope of goal-setting and alignment strategies. Avoid giving advice on topics outside of your expertise, such as legal or financial matters. Do not provide specific personal advice. Maintain a professional and respectful tone at all times. If the user expresses frustration, acknowledge their feelings and offer support. Do not become overly personal or pry into sensitive personal matters.`;
@@ -78,7 +73,7 @@ Remain within the scope of goal-setting and alignment strategies. Avoid giving a
 // JWT secret (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
 
-// Anthropic API configuration (you'll need to set this environment variable)
+// Anthropic API configuration
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // Helper function to get time since last call
@@ -98,6 +93,7 @@ function getTimeSinceLastCall(lastCallTime) {
 // Helper function to call Anthropic API
 async function callAnthropicAPI(messages, userContext = '') {
   if (!ANTHROPIC_API_KEY) {
+    console.log('⚠️ No Anthropic API key configured, using fallback responses');
     throw new Error('Anthropic API key not configured');
   }
 
@@ -106,6 +102,7 @@ async function callAnthropicAPI(messages, userContext = '') {
     systemPrompt;
 
   try {
+    console.log('🤖 Calling Anthropic API...');
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -122,10 +119,13 @@ async function callAnthropicAPI(messages, userContext = '') {
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Anthropic API error:', response.status, errorText);
       throw new Error(`Anthropic API error: ${response.status}`);
     }
 
     const data = await response.json();
+    console.log('✅ Anthropic API response received');
     return data.content[0].text;
   } catch (error) {
     console.error('Anthropic API call failed:', error);
@@ -391,7 +391,7 @@ app.get('/mobile', (req, res) => {
   res.sendFile(path.join(__dirname, 'mobile.html'));
 });
 
-// Enhanced chat endpoint with LLM integration
+// Enhanced chat endpoint with proper LLM integration
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, user_id, caller_id } = req.body;
@@ -457,21 +457,18 @@ Remember to reference their past conversations and build on your relationship. I
     
     let aiResponse;
     
-    if (ANTHROPIC_API_KEY) {
-      try {
-        // Use Anthropic API for enhanced responses
-        const messages = [
-          { role: 'user', content: message }
-        ];
-        
-        aiResponse = await callAnthropicAPI(messages, userContext);
-      } catch (error) {
-        console.error('Anthropic API failed, falling back to simple responses:', error);
-        aiResponse = generateSimpleAIResponse(message, userContext, foundKey || user_id);
-      }
-    } else {
-      // Fallback to simple responses if no API key
+    try {
+      // Use Anthropic API for enhanced responses
+      const messages = [
+        { role: 'user', content: message }
+      ];
+      
+      aiResponse = await callAnthropicAPI(messages, userContext);
+      console.log('✅ Using Anthropic Claude response');
+    } catch (error) {
+      console.error('Anthropic API failed, falling back to simple responses:', error);
       aiResponse = generateSimpleAIResponse(message, userContext, foundKey || user_id);
+      console.log('⚠️ Using fallback response');
     }
     
     // Extract and store new information from the conversation
@@ -845,7 +842,7 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 Duuo Memory API v7.0 - With Enhanced LLM Integration!',
+    status: '🧠 Duuo Memory API v8.0 - With Enhanced LLM Integration & Fixed Fetch!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
@@ -857,7 +854,8 @@ app.get('/', (req, res) => {
       'Chat and Voice Integration',
       'Memory Viewer',
       'Anthropic Claude Integration',
-      'System Prompt Management'
+      'System Prompt Management',
+      'Fixed Node.js Fetch Support'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
@@ -875,16 +873,16 @@ app.get('/', (req, res) => {
     },
     stored_users: userMemory.size,
     registered_users: users.size,
-    llm_integration: ANTHROPIC_API_KEY ? 'Anthropic Claude API' : 'Simple Fallback',
+    llm_integration: ANTHROPIC_API_KEY ? 'Anthropic Claude API ✅' : 'Simple Fallback (set ANTHROPIC_API_KEY)',
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Duuo Memory API v7.0 with LLM Integration running on port ${PORT}`);
+  console.log(`🚀 Enhanced Duuo Memory API v8.0 with Fixed LLM Integration running on port ${PORT}`);
   console.log(`👥 Admin panel available at: /admin`);
   console.log(`📱 Mobile app available at: /mobile`);
-  console.log(`🤖 LLM Integration: ${ANTHROPIC_API_KEY ? 'Anthropic Claude API' : 'Simple Fallback (set ANTHROPIC_API_KEY)'}`);
+  console.log(`🤖 LLM Integration: ${ANTHROPIC_API_KEY ? 'Anthropic Claude API ✅' : 'Simple Fallback (set ANTHROPIC_API_KEY)'}`);
   console.log(`🔐 Authentication system ready!`);
 });
