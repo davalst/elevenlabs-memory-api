@@ -199,6 +199,12 @@
                     </div>
                     
                     <div class="form-group">
+                        <label for="phoneNumber">Phone Number (International Format)</label>
+                        <input type="tel" id="phoneNumber" name="phoneNumber" placeholder="+15064441905" pattern="^\+[1-9]\d{1,14}$" required>
+                        <small style="color: #7f8c8d; font-size: 12px;">Format: +1234567890 (include country code)</small>
+                    </div>
+                    
+                    <div class="form-group">
                         <label for="password">Password</label>
                         <input type="password" id="password" name="password" required minlength="6">
                     </div>
@@ -233,6 +239,7 @@
             const userData = {
                 fullName: formData.get('fullName'),
                 email: formData.get('email'),
+                phoneNumber: formData.get('phoneNumber'),
                 password: formData.get('password')
             };
             
@@ -286,6 +293,7 @@
                 <div class="user-info">
                     <div class="user-email">${user.email}</div>
                     <div class="user-name">${user.fullName}</div>
+                    <div class="user-name">${user.phoneNumber}</div>
                 </div>
                 <div class="user-actions">
                     <button class="btn btn-danger btn-small" onclick="deleteUser('${user.id}', '${user.email}')">
