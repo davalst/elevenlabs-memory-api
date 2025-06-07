@@ -9,6 +9,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Add CORS headers middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 // File paths for persistence
 const DATA_DIR = process.env.NODE_ENV === 'production' 
   ? '/opt/render/project/src/data'
@@ -238,45 +252,27 @@ app.post('/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     
-    // Find user by email
-    let foundUser = null;
-    for (let user of users.values()) {
-      if (user.email === email) {
-        foundUser = user;
-        break;
-      }
-    }
+    const user = Array.from(users.values()).find(u => u.email === email);
     
-    if (!foundUser) {
+    if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     
-    // Check password
-    const isValidPassword = await bcrypt.compare(password, foundUser.password);
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     
-    // Update last login
-    foundUser.lastLogin = new Date().toISOString();
-    
-    // Create JWT token
-    const token = jwt.sign(
-      { userId: foundUser.id, email: foundUser.email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-    
-    console.log(`🔐 User logged in: ${email}`);
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
     
     res.json({
-      message: 'Login successful',
       token,
       user: {
-        id: foundUser.id,
-        email: foundUser.email,
-        fullName: foundUser.fullName,
-        phoneNumber: foundUser.phoneNumber
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber
       }
     });
   } catch (error) {
@@ -311,6 +307,7 @@ app.get('/auth/verify', (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Token verification error:', error);
     res.status(401).json({ error: 'Invalid token' });
   }
 });

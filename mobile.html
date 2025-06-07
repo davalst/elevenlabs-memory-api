@@ -26,9 +26,27 @@
             position: relative;
         }
         
-        .duuo-logo-img {
-            height: auto;
-            max-width: 100%;
+        .duuo-logo {
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            color: #000;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+        }
+
+        .duuo-logo span {
+            display: inline-block;
+        }
+
+        .duuo-logo span:nth-child(2),
+        .duuo-logo span:nth-child(3) {
+            color: #FF6B00;
+        }
+
+        .duuo-logo span:nth-child(3) {
+            opacity: 0.7;
         }
         
         /* Login Screen */
@@ -57,10 +75,14 @@
             margin-bottom: 40px;
         }
         
-        .logo-container .duuo-logo-img {
-            width: 200px;
-            height: auto;
-            margin-bottom: 16px;
+        .logo-container .duuo-logo {
+            font-size: 32px;
+            color: #fff;
+        }
+        
+        .logo-container .duuo-logo span:nth-child(2),
+        .logo-container .duuo-logo span:nth-child(3) {
+            color: #FF6B00;
         }
         
         .logo-container p {
@@ -157,9 +179,14 @@
             gap: 12px;
         }
         
-        .header-logo .duuo-logo-img {
-            width: 80px;
-            height: auto;
+        .header-logo .duuo-logo {
+            font-size: 32px;
+            color: #fff;
+        }
+        
+        .header-logo .duuo-logo span:nth-child(2),
+        .header-logo .duuo-logo span:nth-child(3) {
+            color: #FF6B00;
         }
         
         .user-info {
@@ -523,12 +550,12 @@
                 padding: 20px 16px;
             }
             
-            .logo-container .duuo-logo-img {
-                width: 160px;
+            .logo-container .duuo-logo {
+                font-size: 24px;
             }
             
-            .header-logo .duuo-logo-img {
-                width: 60px;
+            .header-logo .duuo-logo {
+                font-size: 24px;
             }
         }
     </style>
@@ -539,7 +566,9 @@
         <div id="loginScreen" class="login-screen">
             <div class="login-card">
                 <div class="logo-container">
-                    <img src="duuologo.png" alt="Duuo" class="duuo-logo-img">
+                    <div class="duuo-logo">
+                        <span>d</span><span>u</span><span>u</span><span>o</span>
+                    </div>
                     <p>Your AI Goal Coach</p>
                 </div>
                 
@@ -567,7 +596,9 @@
         <div id="appScreen" class="app-screen">
             <div class="app-header">
                 <div class="header-logo">
-                    <img src="duuologo.png" alt="Duuo" class="duuo-logo-img">
+                    <div class="duuo-logo">
+                        <span>d</span><span>u</span><span>u</span><span>o</span>
+                    </div>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar" id="userAvatar">U</div>
@@ -645,7 +676,7 @@
 
     <script>
         // Configuration
-        const API_BASE = 'https://elevenlabs-memory-api.onrender.com';
+        const API_BASE = window.location.origin;
         
         // State management
         let currentUser = null;
