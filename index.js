@@ -1,12 +1,25 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Serve static admin files
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
 // Enhanced memory storage
 let userMemory = new Map();
+
+// Simple user storage (in-memory for now, will upgrade to database later)
+let users = new Map();
+let userIdCounter = 1;
+
+// JWT secret (in production, use environment variable)
+const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
 
 // Helper function to get time since last call
 function getTimeSinceLastCall(lastCallTime) {
@@ -21,6 +34,177 @@ function getTimeSinceLastCall(lastCallTime) {
   if (diffMinutes < 1440) return `${Math.round(diffMinutes / 60)} hours ago`;
   return `${Math.round(diffMinutes / 1440)} days ago`;
 }
+
+// ================================
+// ADMIN PANEL ENDPOINTS
+// ================================
+
+// Get all users
+app.get('/admin/users', (req, res) => {
+  const userList = Array.from(users.values()).map(user => ({
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    createdAt: user.createdAt,
+    lastLogin: user.lastLogin
+  }));
+  
+  res.json(userList);
+});
+
+// Create new user
+app.post('/admin/users', async (req, res) => {
+  try {
+    const { email, password, fullName } = req.body;
+    
+    if (!email || !password || !fullName) {
+      return res.status(400).json({ error: 'Email, password, and full name are required' });
+    }
+    
+    // Check if user already exists
+    for (let user of users.values()) {
+      if (user.email === email) {
+        return res.status(400).json({ error: 'User with this email already exists' });
+      }
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create user
+    const newUser = {
+      id: userIdCounter++,
+      email,
+      password: hashedPassword,
+      fullName,
+      createdAt: new Date().toISOString(),
+      lastLogin: null,
+      isActive: true
+    };
+    
+    users.set(newUser.id, newUser);
+    
+    console.log(`👤 New user created: ${email} (${fullName})`);
+    
+    res.status(201).json({
+      message: 'User created successfully',
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        fullName: newUser.fullName
+      }
+    });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete user
+app.delete('/admin/users/:id', (req, res) => {
+  const userId = parseInt(req.params.id);
+  
+  if (users.has(userId)) {
+    const user = users.get(userId);
+    users.delete(userId);
+    console.log(`🗑️ User deleted: ${user.email}`);
+    res.json({ message: 'User deleted successfully' });
+  } else {
+    res.status(404).json({ error: 'User not found' });
+  }
+});
+
+// ================================
+// AUTHENTICATION ENDPOINTS
+// ================================
+
+// User login
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
+    // Find user by email
+    let foundUser = null;
+    for (let user of users.values()) {
+      if (user.email === email) {
+        foundUser = user;
+        break;
+      }
+    }
+    
+    if (!foundUser) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, foundUser.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Update last login
+    foundUser.lastLogin = new Date().toISOString();
+    
+    // Create JWT token
+    const token = jwt.sign(
+      { userId: foundUser.id, email: foundUser.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    console.log(`🔐 User logged in: ${email}`);
+    
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: foundUser.id,
+        email: foundUser.email,
+        fullName: foundUser.fullName
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Verify token
+app.get('/auth/verify', (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = users.get(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      valid: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName
+      }
+    });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// ================================
+// EXISTING MEMORY ENDPOINTS
+// ================================
 
 // Enhanced memory tool endpoint
 app.post('/api/memory/remember', (req, res) => {
@@ -257,28 +441,34 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v4.2 - Enhanced Phone Number Recognition!',
+    status: '🧠 ElevenLabs Memory API v5.0 - With Admin Panel!',
     features: [
       'Smart name-based memory lookup',
       'Temporal context awareness', 
       'Memory cleanup and deduplication',
-      'Clear all memories endpoint',
-      'Stable post-call webhook integration'
+      'User authentication system',
+      'Admin panel for user management',
+      'JWT token authentication'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
       postcall_webhook: '/webhook/elevenlabs', 
       debug: '/debug/memory',
       cleanup: '/api/memory/cleanup',
-      clear_all: '/api/memory/clear-all'
+      clear_all: '/api/memory/clear-all',
+      admin_panel: '/admin',
+      auth_login: '/auth/login',
+      auth_verify: '/auth/verify'
     },
     stored_users: userMemory.size,
+    registered_users: users.size,
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Clean Memory API v4.1 running on port ${PORT}`);
-  console.log(`✨ Removed problematic pre-call webhook - back to stable operation!`);
+  console.log(`🚀 Enhanced Memory API v5.0 running on port ${PORT}`);
+  console.log(`👥 Admin panel available at: /admin`);
+  console.log(`🔐 Authentication system ready!`);
 });
