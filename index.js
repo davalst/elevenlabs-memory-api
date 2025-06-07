@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Enhanced memory storage: { caller_id: { user_data } }
+// Enhanced memory storage
 let userMemory = new Map();
 
 // Helper function to get time since last call
@@ -21,6 +21,59 @@ function getTimeSinceLastCall(lastCallTime) {
   if (diffMinutes < 1440) return `${Math.round(diffMinutes / 60)} hours ago`;
   return `${Math.round(diffMinutes / 1440)} days ago`;
 }
+
+// Pre-call webhook - captures CLID before conversation starts
+app.post('/webhook/precall', (req, res) => {
+  console.log('📞 Pre-call webhook received');
+  const { from_number, to_number, call_sid, agent_id } = req.body;
+  
+  console.log(`📱 Incoming call from: ${from_number} to: ${to_number}, call_sid: ${call_sid}`);
+  
+  // Look up user by phone number to personalize the experience
+  let userData = null;
+  let foundKey = null;
+  
+  // Search for user by their actual phone number
+  for (let [key, data] of userMemory.entries()) {
+    if (data.phone_number === from_number || data.caller_id === from_number) {
+      userData = data;
+      foundKey = key;
+      break;
+    }
+  }
+  
+  if (userData) {
+    console.log(`🎯 Recognized caller: ${foundKey} (${from_number})`);
+    
+    // Return data to personalize the conversation
+    return res.json({
+      recognized: true,
+      user_name: userData.fullname || foundKey,
+      last_call: getTimeSinceLastCall(userData.last_call_time),
+      conversation_config_override: {
+        agent: {
+          first_message: `Welcome back ${userData.fullname}! Great to hear from you again. Your last call was ${getTimeSinceLastCall(userData.last_call_time)}.`
+        }
+      },
+      dynamic_variables: {
+        caller_number: from_number,
+        user_name: userData.fullname || foundKey,
+        is_returning_user: true
+      }
+    });
+  } else {
+    console.log(`👋 New caller: ${from_number}`);
+    
+    // New user - use standard greeting
+    return res.json({
+      recognized: false,
+      dynamic_variables: {
+        caller_number: from_number,
+        is_returning_user: false
+      }
+    });
+  }
+});
 
 // Enhanced memory tool endpoint with cleanup
 app.post('/api/memory/remember', (req, res) => {
@@ -86,6 +139,7 @@ app.post('/api/memory/remember', (req, res) => {
     const updated = { 
       ...existing, 
       ...details,
+      phone_number: caller_id || existing.phone_number, // Store actual phone number
       caller_id: caller_id || existing.caller_id,
       last_updated: new Date().toISOString(),
       last_call_time: new Date().toISOString(), // Track when this call happened
@@ -186,6 +240,7 @@ app.post('/webhook/elevenlabs', (req, res) => {
       ...existing,
       ...data.data_collection,
       caller_id: caller_id,
+      phone_number: caller_id || existing.phone_number,
       last_conversation_date: new Date().toISOString(),
       last_call_time: new Date().toISOString(),
       first_created: existing.first_created || new Date().toISOString(),
@@ -220,16 +275,18 @@ app.get('/debug/memory', (req, res) => {
 // Enhanced health check
 app.get('/', (req, res) => {
   res.json({ 
-    status: '🧠 ElevenLabs Memory API v3.0 - Enhanced with Cleanup & Context!',
+    status: '🧠 ElevenLabs Memory API v4.0 - Enhanced with Pre-Call CLID Recognition!',
     features: [
+      'Pre-call webhook with CLID recognition',
       'Smart name-based memory lookup',
       'Temporal context awareness', 
       'Memory cleanup and deduplication',
-      'Enhanced debugging with memory age'
+      'Personalized greetings for returning callers'
     ],
     endpoints: {
       memory_tool: '/api/memory/remember',
-      webhook: '/webhook/elevenlabs', 
+      precall_webhook: '/webhook/precall',
+      postcall_webhook: '/webhook/elevenlabs', 
       debug: '/debug/memory',
       cleanup: '/api/memory/cleanup'
     },
@@ -240,6 +297,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Enhanced Memory API v3.0 running on port ${PORT}`);
-  console.log(`🧹 Now includes cleanup, context awareness, and smart name matching!`);
+  console.log(`🚀 Enhanced Memory API v4.0 running on port ${PORT}`);
+  console.log(`📱 Now includes pre-call CLID recognition for personalized greetings!`);
 });
