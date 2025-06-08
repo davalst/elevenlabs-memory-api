@@ -2,7 +2,10 @@ services:
   - type: web
     name: duuo-memory-api
     env: node
-    buildCommand: npm install
+    buildCommand: |
+      mkdir -p /opt/render/project/src/data
+      cp -r data/* /opt/render/project/src/data/
+      npm install
     startCommand: node index.js
     envVars:
       - key: NODE_ENV

@@ -8,7 +8,6 @@ const fs = require('fs').promises;
 // Configuration
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
-const PROMPT_FILE = path.join(__dirname, 'data', 'system-prompt.txt');
 
 const app = express();
 app.use(cors());
@@ -61,6 +60,7 @@ const DATA_DIR = process.env.NODE_ENV === 'production'
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const PROMPT_FILE = path.join(DATA_DIR, 'system-prompt.txt');
 
 // Data storage
 const users = new Map();
@@ -72,11 +72,12 @@ let systemPrompt = '';
 async function initializeData() {
   try {
     // Create data directory if it doesn't exist
-    await fs.mkdir(path.join(__dirname, 'data'), { recursive: true });
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    console.log(`📁 Data directory ensured at ${DATA_DIR}`);
     
     // Load users
     try {
-      const usersData = await fs.readFile(path.join(__dirname, 'data', 'users.json'), 'utf8');
+      const usersData = await fs.readFile(USERS_FILE, 'utf8');
       const loadedUsers = JSON.parse(usersData);
       Object.entries(loadedUsers).forEach(([id, user]) => {
         users.set(parseInt(id), user);
@@ -89,7 +90,7 @@ async function initializeData() {
     
     // Load memory
     try {
-      const memoryData = await fs.readFile(path.join(__dirname, 'data', 'memory.json'), 'utf8');
+      const memoryData = await fs.readFile(MEMORY_FILE, 'utf8');
       const loadedMemory = JSON.parse(memoryData);
       Object.entries(loadedMemory).forEach(([key, value]) => userMemory.set(key, value));
       console.log(`🧠 Loaded ${userMemory.size} memory entries`);
@@ -100,9 +101,9 @@ async function initializeData() {
     // Load system prompt
     try {
       systemPrompt = await fs.readFile(PROMPT_FILE, 'utf8');
-      console.log('📝 Loaded system prompt');
+      console.log('📝 Loaded system prompt:', systemPrompt.substring(0, 50) + '...');
     } catch (error) {
-      if (error.code !== 'ENOENT') console.error('Error loading system prompt:', error);
+      console.error('Error loading system prompt:', error);
       systemPrompt = 'You are Duuo, an AI goal coach. Help users achieve their goals through supportive conversation.';
       await saveSystemPrompt();
     }
@@ -115,17 +116,18 @@ async function initializeData() {
 async function saveUsers() {
   const data = {};
   users.forEach((user, id) => data[id] = user);
-  await fs.writeFile(path.join(__dirname, 'data', 'users.json'), JSON.stringify(data, null, 2));
+  await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2));
 }
 
 async function saveMemory() {
   const data = {};
   userMemory.forEach((value, key) => data[key] = value);
-  await fs.writeFile(path.join(__dirname, 'data', 'memory.json'), JSON.stringify(data, null, 2));
+  await fs.writeFile(MEMORY_FILE, JSON.stringify(data, null, 2));
 }
 
 async function saveSystemPrompt() {
   await fs.writeFile(PROMPT_FILE, systemPrompt);
+  console.log('💾 Saved system prompt to:', PROMPT_FILE);
 }
 
 // Initialize data on startup
@@ -781,8 +783,13 @@ async function callAnthropicAPI(messages, userContext = '') {
       body: JSON.stringify({
         model: 'claude-3-sonnet-20240229',
         max_tokens: 1000,
-        system: systemMessage,
-        messages: messages
+        messages: [
+          {
+            role: 'system',
+            content: systemMessage
+          },
+          ...messages
+        ]
       })
     });
 
