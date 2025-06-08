@@ -488,7 +488,7 @@
             
             const formData = new FormData(e.target);
             const promptData = {
-                systemPrompt: formData.get('systemPrompt')
+                prompt: formData.get('systemPrompt')
             };
             
             try {
@@ -537,7 +537,7 @@
                 const response = await fetch(`${API_BASE}/admin/system-prompt`);
                 if (response.ok) {
                     const result = await response.json();
-                    const prompt = result.systemPrompt || 'No system prompt configured';
+                    const prompt = result.prompt || 'No system prompt configured';
                     
                     document.getElementById('systemPrompt').value = prompt;
                     document.getElementById('promptPreview').textContent = prompt;

@@ -56,11 +56,15 @@ const DATA_DIR = process.env.NODE_ENV === 'production'
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const PROMPT_FILE = path.join(DATA_DIR, 'system_prompt.txt');
 
 // Enhanced memory storage with persistence
 let userMemory = new Map();
 let users = new Map();
 let userIdCounter = 1;
+
+// System prompt storage
+let systemPrompt = '';
 
 // Initialize data directory and load data
 async function initializeData() {
@@ -92,6 +96,16 @@ async function initializeData() {
       await fs.writeFile(MEMORY_FILE, '{}');
     }
     
+    // Load system prompt
+    try {
+      const promptData = await fs.readFile(PROMPT_FILE, 'utf-8');
+      systemPrompt = promptData;
+      console.log('🤖 Loaded system prompt from persistent storage');
+    } catch (error) {
+      console.log('Creating new system prompt file');
+      await fs.writeFile(PROMPT_FILE, '');
+    }
+    
   } catch (error) {
     console.error('Error initializing data:', error);
   }
@@ -106,6 +120,11 @@ async function saveUsers() {
 async function saveMemory() {
   const data = Object.fromEntries(userMemory);
   await fs.writeFile(MEMORY_FILE, JSON.stringify(data, null, 2));
+}
+
+// Save system prompt to file
+async function saveSystemPrompt() {
+  await fs.writeFile(PROMPT_FILE, systemPrompt);
 }
 
 // Initialize data on startup
@@ -259,6 +278,33 @@ app.delete('/admin/users/:id', (req, res) => {
     });
   } else {
     res.status(404).json({ error: 'User not found' });
+  }
+});
+
+// System prompt endpoints
+app.get('/admin/system-prompt', (req, res) => {
+  res.json({ systemPrompt: systemPrompt });
+});
+
+app.post('/admin/system-prompt', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Prompt is required and must be a string' });
+    }
+    
+    systemPrompt = prompt;
+    await saveSystemPrompt();
+    console.log('🤖 System prompt updated');
+    
+    res.json({ 
+      message: 'System prompt updated successfully',
+      systemPrompt: systemPrompt 
+    });
+  } catch (error) {
+    console.error('Error updating system prompt:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
