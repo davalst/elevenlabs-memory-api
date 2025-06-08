@@ -516,7 +516,10 @@ app.post('/api/memory/remember', async (req, res) => {
     const existing = userMemory.get(storageKey) || {};
     const updated = { 
       ...existing, 
-      ...details,
+      ...(details || {}),  // Safely merge details if they exist
+      hobbies: details?.hobbies || existing.hobbies,  // Preserve existing hobbies if not in new details
+      mood: details?.mood || existing.mood,  // Preserve existing mood if not in new details
+      goals: details?.goals || existing.goals,  // Preserve existing goals if not in new details
       phone_number: caller_id && caller_id !== 'undefined' && !caller_id.includes('{{') ? caller_id : existing.phone_number,
       caller_id: caller_id || existing.caller_id,
       last_updated: new Date().toISOString(),
@@ -709,57 +712,125 @@ app.get('/', (req, res) => {
   });
 });
 
+// Helper function to handle memory operations for chat
+async function handleChatMemory(action, user_id, message = null) {
+  console.log('🧠 Chat memory ' + action + ' for user: ' + user_id);
+  
+  try {
+    // Make internal request to memory endpoint
+    const response = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/api/memory/remember', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action,
+        user_id,
+        details: message ? extractInformationFromMessage(message) : null
+      })
+    });
+
+    const result = await response.json();
+    
+    if (action === 'retrieve') {
+      if (!result.userData) {
+        return {
+          message: result.message || "New user - building initial profile",
+          isNewUser: true
+        };
+      }
+      
+      return {
+        message: result.message,
+        userData: result.userData,
+        isNewUser: false,
+        timeSinceLastCall: result.timeSinceLastCall,
+        memoryAge: result.memoryAge
+      };
+    }
+    
+    if (action === 'store' && message) {
+      return result;
+    }
+    
+    return { success: false, error: 'Invalid action' };
+  } catch (error) {
+    console.error('❌ Memory operation failed:', error);
+    throw error;
+  }
+}
+
+// Helper function to extract information from messages
+function extractInformationFromMessage(message) {
+  const info = {};
+  
+  // Extract hobbies
+  const hobbyMatch = message.toLowerCase().match(/(?:my hobby is|i love|i enjoy) (.*?)(?:\.|$)/i);
+  if (hobbyMatch) {
+    info.hobbies = hobbyMatch[1].trim();
+    console.log('✅ Extracted hobby:', info.hobbies);
+  }
+  
+  // Extract mood
+  const moodMatch = message.toLowerCase().match(/(?:my mood is|i feel|i am) (.*?)(?:\.|$)/i);
+  if (moodMatch) {
+    info.mood = moodMatch[1].trim();
+    console.log('✅ Extracted mood:', info.mood);
+  }
+  
+  // Extract goals
+  const goalMatch = message.toLowerCase().match(/(?:my goal is|want to|trying to|have a goal of|have a goal to) (.*?)(?:\.|$)/i);
+  if (goalMatch) {
+    info.goals = goalMatch[1].trim();
+    console.log('✅ Extracted goal:', info.goals);
+  }
+  
+  return info;
+}
+
 // Enhanced chat endpoint with proper LLM integration
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, user_id, caller_id, mode } = req.body;
-    
+    console.log('📨 Chat request received:', {
+      timestamp: new Date().toISOString(),
+      body: req.body
+    });
+
     // Verify JWT token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
+      console.log('❌ No token provided');
       return res.status(401).json({ error: 'No token provided' });
     }
     
     try {
       jwt.verify(token, JWT_SECRET);
+      console.log('✅ JWT token verified');
     } catch (error) {
+      console.log('❌ Invalid JWT token');
       return res.status(401).json({ error: 'Invalid token' });
     }
+
+    const { message, user_id, caller_id, mode } = req.body;
     
-    console.log(`💬 ${mode} message from ${user_id}: ${message}`);
+    console.log('👤 User details:', {
+      user_id,
+      caller_id,
+      mode,
+      message_length: message?.length
+    });
+
+    // Retrieve user memory
+    const memoryResult = await handleChatMemory('retrieve', user_id);
+    console.log('📖 Memory retrieval result:', memoryResult);
     
-    // Get user memory
-    let userData = userMemory.get(user_id);
-    
-    // If not found by exact match, try partial match
-    if (!userData) {
-      for (let [key, data] of userMemory.entries()) {
-        if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
-          userData = data;
-          break;
-        }
-      }
-    }
-    
-    // If still not found, try by phone number
-    if (!userData && caller_id) {
-      for (let [key, data] of userMemory.entries()) {
-        if (data.phone_number === caller_id || data.caller_id === caller_id) {
-          userData = data;
-          break;
-        }
-      }
-    }
-    
-    // Format memory context
     let userContext = '';
-    if (userData) {
-      const timeSince = getTimeSinceLastCall(userData.last_call_time);
-      const memoryAge = getTimeSinceLastCall(userData.first_created || userData.last_call_time);
+    if (memoryResult.userData) {
+      const { userData, timeSinceLastCall, memoryAge } = memoryResult;
       
       userContext = `User Information:
 - Name: ${userData.fullname || user_id}
-- Last interaction: ${timeSince || 'First interaction'}
+- Last interaction: ${timeSinceLastCall || 'First interaction'}
 - Memory created: ${memoryAge || 'Just now'}
 - Total conversations: ${userData.conversation_count || 1}
 
@@ -772,6 +843,10 @@ ${Object.entries(userData)
   )
   .map(([key, value]) => `${key}: ${value}`)
   .join('\n')}`;
+
+      console.log('📝 Generated user context:', userContext);
+    } else {
+      console.log('ℹ️ No existing user data found');
     }
     
     let aiResponse;
@@ -781,26 +856,33 @@ ${Object.entries(userData)
       const messages = [
         { role: 'user', content: message }
       ];
+
+      console.log('🤖 Preparing Anthropic API call:', {
+        message_count: messages.length,
+        has_context: !!userContext,
+        context_length: userContext?.length
+      });
       
       aiResponse = await callAnthropicAPI(messages, userContext);
-      console.log('✅ Using Anthropic Claude response');
+      console.log('✅ Anthropic API response received');
       
-      // Update memory with new information
-      if (userData) {
-        userData.last_call_time = new Date().toISOString();
-        userData.conversation_count = (userData.conversation_count || 0) + 1;
-        await saveMemory();
+      // Store any new information from the message
+      const storeResult = await handleChatMemory('store', user_id, message);
+      if (storeResult.stored) {
+        console.log('✅ Stored new information:', storeResult.stored);
       }
+      
     } catch (error) {
-      console.error('Anthropic API failed, falling back to simple responses:', error);
+      console.error('❌ Anthropic API error:', error);
+      console.log('⚠️ Falling back to simple responses');
       aiResponse = generateSimpleAIResponse(message);
-      console.log('⚠️ Using fallback response');
     }
     
+    console.log('📤 Sending response to client');
     res.json({ response: aiResponse });
     
   } catch (error) {
-    console.error('Chat error:', error);
+    console.error('❌ Chat endpoint error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -886,8 +968,5 @@ async function callAnthropicAPI(messages, userContext = '') {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Duuo Memory API v8.0 running on port ${PORT}`);
-  console.log(`👥 Admin panel available at: /admin`);
-  console.log(`📱 Mobile app available at: /mobile`);
-  console.log(`🔐 Authentication system ready!`);
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
