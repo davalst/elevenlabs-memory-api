@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -7,6 +8,9 @@ const fs = require('fs').promises;
 
 // Configuration
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+if (!ANTHROPIC_API_KEY) {
+  console.warn('⚠️ ANTHROPIC_API_KEY not found in environment variables');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
 
 const app = express();
@@ -816,7 +820,8 @@ function generateSimpleAIResponse(message) {
 // Helper function to call Anthropic API
 async function callAnthropicAPI(messages, userContext = '') {
   if (!ANTHROPIC_API_KEY) {
-    console.log('⚠️ No Anthropic API key configured, using fallback responses');
+    console.error('⚠️ No Anthropic API key configured');
+    console.error('Environment variables:', process.env);
     throw new Error('Anthropic API key not configured');
   }
 
@@ -829,6 +834,22 @@ async function callAnthropicAPI(messages, userContext = '') {
     if (userContext) {
       console.log('📝 Including user context:', userContext.substring(0, 100) + '...');
     }
+    console.log('📝 System message:', systemMessage.substring(0, 100) + '...');
+    
+    const requestBody = {
+      model: 'claude-3-sonnet-20240229',
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'system',
+          content: systemMessage
+        },
+        ...messages
+      ]
+    };
+    
+    console.log('📤 Request body:', JSON.stringify(requestBody, null, 2));
+    console.log('🔑 Using API key:', ANTHROPIC_API_KEY.substring(0, 5) + '...');
     
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -837,30 +858,26 @@ async function callAnthropicAPI(messages, userContext = '') {
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify({
-        model: 'claude-3-sonnet-20240229',
-        max_tokens: 1000,
-        messages: [
-          {
-            role: 'system',
-            content: systemMessage
-          },
-          ...messages
-        ]
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Anthropic API error:', response.status, errorText);
-      throw new Error(`Anthropic API error: ${response.status}`);
+      console.error('❌ Anthropic API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        error: errorText
+      });
+      throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('✅ Anthropic API response received');
+    console.log('✅ Anthropic API response:', JSON.stringify(data, null, 2));
     return data.content[0].text;
   } catch (error) {
-    console.error('Anthropic API call failed:', error);
+    console.error('❌ Anthropic API call failed:', error);
+    console.error('Stack trace:', error.stack);
     throw error;
   }
 }
