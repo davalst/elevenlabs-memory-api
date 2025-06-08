@@ -23,6 +23,32 @@ app.use((req, res, next) => {
   next();
 });
 
+// Serve static files with caching disabled
+app.use(express.static(__dirname, {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
+
+// Serve admin files with caching disabled
+app.use('/admin', express.static(path.join(__dirname, 'admin'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
+
 // File paths for persistence
 const DATA_DIR = process.env.NODE_ENV === 'production' 
   ? '/opt/render/project/src/data'
@@ -30,9 +56,6 @@ const DATA_DIR = process.env.NODE_ENV === 'production'
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
-
-// Serve static admin files
-app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // Enhanced memory storage with persistence
 let userMemory = new Map();

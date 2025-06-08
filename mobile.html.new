@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Duuo - AI Goal Coach</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+            min-height: 100vh;
+            overflow-x: hidden;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 100%;
+            min-height: 100vh;
+            position: relative;
+        }
+        
+        .duuo-logo {
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            color: #000;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+        }
+
+        .duuo-logo span {
+            display: inline-block;
+        }
+
+        .duuo-logo span:nth-child(2),
+        .duuo-logo span:nth-child(3) {
+            color: #FF6B00;
+        }
+
+        .duuo-logo span:nth-child(3) {
+            opacity: 0.7;
+        }
+        
+        /* Login Screen */
+        .login-screen {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .login-card {
+            background: rgba(255, 255, 255, 0.98);
+            padding: 50px 40px;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 400px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .logo-container {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .logo-container .duuo-logo {
+            font-size: 32px;
+            color: #000;
+        }
+        
+        .logo-container .duuo-logo span:nth-child(2),
+        .logo-container .duuo-logo span:nth-child(3) {
+            color: #FF6B00;
+        }
+        
+        .logo-container p {
+            color: #666;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        /* Rest of your existing styles... */
+        
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 40px 30px;
+                margin: 15px;
+            }
+            
+            .content-area {
+                padding: 20px 16px;
+            }
+            
+            .logo-container .duuo-logo {
+                font-size: 24px;
+            }
+            
+            .header-logo .duuo-logo {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Login Screen -->
+        <div id="loginScreen" class="login-screen">
+            <div class="login-card">
+                <div class="logo-container">
+                    <div class="duuo-logo">
+                        <span>d</span><span>u</span><span>u</span><span>o</span>
+                    </div>
+                    <p>Your AI Goal Coach</p>
+                </div>
+                
+                <div id="loginError" class="error-message"></div>
+                
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+                    
+                    <button type="submit" class="login-btn" id="loginBtn">
+                        Sign In
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Main App -->
+        <div id="appScreen" class="app-screen">
+            <div class="app-header">
+                <div class="header-logo">
+                    <div class="duuo-logo">
+                        <span>d</span><span>u</span><span>u</span><span>o</span>
+                    </div>
+                </div>
+                <div class="user-info">
+                    <div class="user-avatar" id="userAvatar">U</div>
+                    <div class="user-name" id="userName">User</div>
+                </div>
+                <button class="logout-btn" id="logoutBtn">Logout</button>
+            </div>
+            
+            <!-- Rest of your existing HTML... -->
+        </div>
+    </div>
+</body>
+</html> 
