@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: duuo-memory-api
+    env: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1 
