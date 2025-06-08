@@ -901,7 +901,8 @@
                     body: JSON.stringify({
                         message: message,
                         user_id: currentUser.fullName,
-                        caller_id: currentUser.phoneNumber
+                        caller_id: currentUser.phoneNumber,
+                        mode: currentCommunicationMode
                     })
                 });
                 
