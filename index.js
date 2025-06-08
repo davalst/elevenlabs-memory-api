@@ -5,6 +5,11 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs').promises;
 
+// Configuration
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
+const PROMPT_FILE = path.join(__dirname, 'data', 'system-prompt.txt');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -56,82 +61,75 @@ const DATA_DIR = process.env.NODE_ENV === 'production'
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
-const PROMPT_FILE = path.join(DATA_DIR, 'system_prompt.txt');
 
-// Enhanced memory storage with persistence
-let userMemory = new Map();
-let users = new Map();
+// Data storage
+const users = new Map();
+const userMemory = new Map();
 let userIdCounter = 1;
-
-// System prompt storage
 let systemPrompt = '';
 
-// Initialize data directory and load data
+// Initialize data on startup
 async function initializeData() {
   try {
     // Create data directory if it doesn't exist
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    console.log(`📁 Data directory ensured at ${DATA_DIR}`);
+    await fs.mkdir(path.join(__dirname, 'data'), { recursive: true });
     
     // Load users
     try {
-      const userData = await fs.readFile(USERS_FILE, 'utf-8');
-      const loadedUsers = JSON.parse(userData);
-      users = new Map(Object.entries(loadedUsers));
-      userIdCounter = Math.max(...Array.from(users.keys())) + 1;
-      console.log('👥 Loaded users from persistent storage');
+      const usersData = await fs.readFile(path.join(__dirname, 'data', 'users.json'), 'utf8');
+      const loadedUsers = JSON.parse(usersData);
+      Object.entries(loadedUsers).forEach(([id, user]) => {
+        users.set(parseInt(id), user);
+        userIdCounter = Math.max(userIdCounter, parseInt(id) + 1);
+      });
+      console.log(`📋 Loaded ${users.size} users`);
     } catch (error) {
-      console.log('Creating new users file');
-      await fs.writeFile(USERS_FILE, '{}');
+      if (error.code !== 'ENOENT') console.error('Error loading users:', error);
     }
     
     // Load memory
     try {
-      const memoryData = await fs.readFile(MEMORY_FILE, 'utf-8');
+      const memoryData = await fs.readFile(path.join(__dirname, 'data', 'memory.json'), 'utf8');
       const loadedMemory = JSON.parse(memoryData);
-      userMemory = new Map(Object.entries(loadedMemory));
-      console.log('🧠 Loaded memory from persistent storage');
+      Object.entries(loadedMemory).forEach(([key, value]) => userMemory.set(key, value));
+      console.log(`🧠 Loaded ${userMemory.size} memory entries`);
     } catch (error) {
-      console.log('Creating new memory file');
-      await fs.writeFile(MEMORY_FILE, '{}');
+      if (error.code !== 'ENOENT') console.error('Error loading memory:', error);
     }
     
     // Load system prompt
     try {
-      const promptData = await fs.readFile(PROMPT_FILE, 'utf-8');
-      systemPrompt = promptData;
-      console.log('🤖 Loaded system prompt from persistent storage');
+      systemPrompt = await fs.readFile(PROMPT_FILE, 'utf8');
+      console.log('📝 Loaded system prompt');
     } catch (error) {
-      console.log('Creating new system prompt file');
-      await fs.writeFile(PROMPT_FILE, '');
+      if (error.code !== 'ENOENT') console.error('Error loading system prompt:', error);
+      systemPrompt = 'You are Duuo, an AI goal coach. Help users achieve their goals through supportive conversation.';
+      await saveSystemPrompt();
     }
-    
   } catch (error) {
     console.error('Error initializing data:', error);
   }
 }
 
-// Save data to disk
+// Save functions
 async function saveUsers() {
-  const data = Object.fromEntries(users);
-  await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2));
+  const data = {};
+  users.forEach((user, id) => data[id] = user);
+  await fs.writeFile(path.join(__dirname, 'data', 'users.json'), JSON.stringify(data, null, 2));
 }
 
 async function saveMemory() {
-  const data = Object.fromEntries(userMemory);
-  await fs.writeFile(MEMORY_FILE, JSON.stringify(data, null, 2));
+  const data = {};
+  userMemory.forEach((value, key) => data[key] = value);
+  await fs.writeFile(path.join(__dirname, 'data', 'memory.json'), JSON.stringify(data, null, 2));
 }
 
-// Save system prompt to file
 async function saveSystemPrompt() {
   await fs.writeFile(PROMPT_FILE, systemPrompt);
 }
 
 // Initialize data on startup
 initializeData();
-
-// JWT secret (in production, use environment variable)
-const JWT_SECRET = process.env.JWT_SECRET || 'duuo-secret-key-change-in-production';
 
 // Helper function to get time since last call
 function getTimeSinceLastCall(lastCallTime) {
@@ -283,7 +281,7 @@ app.delete('/admin/users/:id', (req, res) => {
 
 // System prompt endpoints
 app.get('/admin/system-prompt', (req, res) => {
-  res.json({ systemPrompt: systemPrompt });
+  res.json({ prompt: systemPrompt });
 });
 
 app.post('/admin/system-prompt', async (req, res) => {
@@ -300,7 +298,7 @@ app.post('/admin/system-prompt', async (req, res) => {
     
     res.json({ 
       message: 'System prompt updated successfully',
-      systemPrompt: systemPrompt 
+      prompt: systemPrompt 
     });
   } catch (error) {
     console.error('Error updating system prompt:', error);
@@ -704,6 +702,104 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Enhanced chat endpoint with proper LLM integration
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, user_id, caller_id, mode } = req.body;
+    
+    // Verify JWT token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    console.log(`💬 ${mode} message from ${user_id}: ${message}`);
+    
+    let aiResponse;
+    
+    try {
+      // Use Anthropic API for enhanced responses
+      const messages = [
+        { role: 'user', content: message }
+      ];
+      
+      aiResponse = await callAnthropicAPI(messages);
+      console.log('✅ Using Anthropic Claude response');
+    } catch (error) {
+      console.error('Anthropic API failed, falling back to simple responses:', error);
+      aiResponse = generateSimpleAIResponse(message);
+      console.log('⚠️ Using fallback response');
+    }
+    
+    res.json({ response: aiResponse });
+    
+  } catch (error) {
+    console.error('Chat error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper function to generate simple AI responses
+function generateSimpleAIResponse(message) {
+  const responses = [
+    "I understand. Can you tell me more about that?",
+    "That's interesting. How does that make you feel?",
+    "I see. What would you like to focus on?",
+    "Thank you for sharing. What are your thoughts on this?",
+    "I hear you. What would be most helpful for you right now?"
+  ];
+  return responses[Math.floor(Math.random() * responses.length)];
+}
+
+// Helper function to call Anthropic API
+async function callAnthropicAPI(messages, userContext = '') {
+  if (!ANTHROPIC_API_KEY) {
+    console.log('⚠️ No Anthropic API key configured, using fallback responses');
+    throw new Error('Anthropic API key not configured');
+  }
+
+  const systemMessage = userContext ? 
+    `${systemPrompt}\n\nUser Context:\n${userContext}` : 
+    systemPrompt;
+
+  try {
+    console.log('🤖 Calling Anthropic API...');
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-sonnet-20240229',
+        max_tokens: 1000,
+        system: systemMessage,
+        messages: messages
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Anthropic API error:', response.status, errorText);
+      throw new Error(`Anthropic API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Anthropic API response received');
+    return data.content[0].text;
+  } catch (error) {
+    console.error('Anthropic API call failed:', error);
+    throw error;
+  }
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
