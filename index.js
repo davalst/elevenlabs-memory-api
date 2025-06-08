@@ -724,6 +724,52 @@ app.post('/api/chat', async (req, res) => {
     
     console.log(`💬 ${mode} message from ${user_id}: ${message}`);
     
+    // Get user memory
+    let userData = userMemory.get(user_id);
+    
+    // If not found by exact match, try partial match
+    if (!userData) {
+      for (let [key, data] of userMemory.entries()) {
+        if (key.includes(user_id) || user_id.includes(key.split(' ')[0])) {
+          userData = data;
+          break;
+        }
+      }
+    }
+    
+    // If still not found, try by phone number
+    if (!userData && caller_id) {
+      for (let [key, data] of userMemory.entries()) {
+        if (data.phone_number === caller_id || data.caller_id === caller_id) {
+          userData = data;
+          break;
+        }
+      }
+    }
+    
+    // Format memory context
+    let userContext = '';
+    if (userData) {
+      const timeSince = getTimeSinceLastCall(userData.last_call_time);
+      const memoryAge = getTimeSinceLastCall(userData.first_created || userData.last_call_time);
+      
+      userContext = `User Information:
+- Name: ${userData.fullname || user_id}
+- Last interaction: ${timeSince || 'First interaction'}
+- Memory created: ${memoryAge || 'Just now'}
+- Total conversations: ${userData.conversation_count || 1}
+
+Previous Context:
+${Object.entries(userData)
+  .filter(([key, value]) => 
+    !['phone_number', 'caller_id', 'email', 'first_created', 'last_updated', 'last_call_time', 'created_via', 'status'].includes(key) && 
+    value && 
+    typeof value === 'string'
+  )
+  .map(([key, value]) => `${key}: ${value}`)
+  .join('\n')}`;
+    }
+    
     let aiResponse;
     
     try {
@@ -732,8 +778,15 @@ app.post('/api/chat', async (req, res) => {
         { role: 'user', content: message }
       ];
       
-      aiResponse = await callAnthropicAPI(messages);
+      aiResponse = await callAnthropicAPI(messages, userContext);
       console.log('✅ Using Anthropic Claude response');
+      
+      // Update memory with new information
+      if (userData) {
+        userData.last_call_time = new Date().toISOString();
+        userData.conversation_count = (userData.conversation_count || 0) + 1;
+        await saveMemory();
+      }
     } catch (error) {
       console.error('Anthropic API failed, falling back to simple responses:', error);
       aiResponse = generateSimpleAIResponse(message);
@@ -773,6 +826,10 @@ async function callAnthropicAPI(messages, userContext = '') {
 
   try {
     console.log('🤖 Calling Anthropic API...');
+    if (userContext) {
+      console.log('📝 Including user context:', userContext.substring(0, 100) + '...');
+    }
+    
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
